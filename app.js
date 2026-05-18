@@ -9,7 +9,8 @@ const FEEDBACK_ENDPOINT = 'https://formspree.io/f/mdajorvp';
 // === 장별 마지막 절 캐시 ===
 const CHAPTER_LENGTHS = {};
 (function () {
-  for (const key in window.BIBLE) {
+  const ref = (window.BIBLES && window.BIBLES.GAE) || window.BIBLE || {};
+  for (const key in ref) {
     const m = key.match(/^(.+?)(\d+):(\d+)$/);
     if (!m) continue;
     const ck = m[1] + ':' + m[2];
@@ -17,6 +18,10 @@ const CHAPTER_LENGTHS = {};
     if (!CHAPTER_LENGTHS[ck] || v > CHAPTER_LENGTHS[ck]) CHAPTER_LENGTHS[ck] = v;
   }
 })();
+
+// 번역본 라벨
+const VERSION_LABEL = { GAE: '개역개정', SAENEW: '새번역' };
+function bibleDict(v) { return (window.BIBLES && window.BIBLES[v]) || window.BIBLE || {}; }
 
 // === 상태 ===
 const defaultState = () => ({
@@ -28,6 +33,7 @@ const defaultState = () => ({
   readDays: {},
   viewDay: null,
   view: 'main',
+  bibleView: 'GAE',     // 'GAE' | 'SAENEW' | 'BOTH'
 });
 
 let state = loadState();
@@ -96,8 +102,12 @@ function getDay(n) { return SCHEDULE.find(d => d.d === n); }
 function chapterMax(book, ch) { return CHAPTER_LENGTHS[book + ':' + ch] || 0; }
 function chapterLabel(book, ch) { return (book === '시') ? `${ch}편` : `${ch}장`; }
 
+// 각 절을 순회하면서 모든 번역본+소제목을 콜백에 전달
 function eachVerseInRange(range, cb) {
   const [book, sc, sv, ec, ev] = range;
+  const gaeDict = bibleDict('GAE');
+  const saeDict = bibleDict('SAENEW');
+  const subs = window.SUBTITLES || {};
   for (let ch = sc; ch <= ec; ch++) {
     let s, e;
     if (ch === sc && ch === ec) { s = sv; e = ev || chapterMax(book, ch); }
@@ -106,26 +116,54 @@ function eachVerseInRange(range, cb) {
     else { s = 1; e = chapterMax(book, ch); }
     if (!e) e = 200;
     for (let v = s; v <= e; v++) {
-      const text = BIBLE[`${book}${ch}:${v}`];
-      if (!text) break;
-      cb(book, ch, v, text.trim());
+      const key = `${book}${ch}:${v}`;
+      const gae = gaeDict[key];
+      if (!gae) break;
+      cb(book, ch, v, {
+        gae: gae.trim(),
+        sae: (saeDict[key] || '').trim(),
+        sub: subs[key] || null,
+      });
     }
   }
 }
 
 function renderRangesHTML(ranges) {
+  const view = state.bibleView || 'GAE';
   const parts = [];
   for (const range of ranges) {
     const book = range[0];
     const fullBook = BOOK_NAMES[book] || book;
     parts.push(`<div class="passage-block"><h3 class="book-title">${fullBook}</h3>`);
     let curCh = null, chBuf = [], chHeader = null;
-    eachVerseInRange(range, (b, ch, v, text) => {
+    eachVerseInRange(range, (b, ch, v, d) => {
       if (ch !== curCh) {
         if (chBuf.length) parts.push(`<div class="chapter"><h4 class="ch-title">${chHeader}</h4>${chBuf.join('')}</div>`);
         chBuf = []; curCh = ch; chHeader = chapterLabel(b, ch);
       }
-      chBuf.push(`<p class="verse"><span class="vnum">${v}</span>${escapeHtml(text)}</p>`);
+      // 소제목
+      if (d.sub) {
+        if (view === 'BOTH') {
+          const a = d.sub.GAE, c = d.sub.SAENEW;
+          if (a || c) {
+            chBuf.push(`<div class="subtitle compare">${a?`<span class="sub-line gae">${escapeHtml(a)}</span>`:''}${c?`<span class="sub-line sae">${escapeHtml(c)}</span>`:''}</div>`);
+          }
+        } else {
+          const s = view === 'GAE' ? d.sub.GAE : d.sub.SAENEW;
+          if (s) chBuf.push(`<div class="subtitle">${escapeHtml(s)}</div>`);
+        }
+      }
+      // 본문
+      if (view === 'BOTH') {
+        chBuf.push(`<div class="verse-compare">
+          <span class="vnum">${v}</span>
+          <p class="ver-line gae"><span class="ver-tag">개역</span>${escapeHtml(d.gae)}</p>
+          ${d.sae ? `<p class="ver-line sae"><span class="ver-tag">새번역</span>${escapeHtml(d.sae)}</p>` : ''}
+        </div>`);
+      } else {
+        const text = view === 'GAE' ? d.gae : (d.sae || d.gae);
+        chBuf.push(`<p class="verse"><span class="vnum">${v}</span>${escapeHtml(text)}</p>`);
+      }
     });
     if (chBuf.length) parts.push(`<div class="chapter"><h4 class="ch-title">${chHeader}</h4>${chBuf.join('')}</div>`);
     parts.push('</div>');
@@ -134,18 +172,25 @@ function renderRangesHTML(ranges) {
 }
 
 function rangesToText(ranges) {
+  const view = state.bibleView || 'GAE';
   const lines = [];
   for (const range of ranges) {
     const book = range[0];
     const fullBook = BOOK_NAMES[book] || book;
     let curCh = null;
-    eachVerseInRange(range, (b, ch, v, text) => {
+    eachVerseInRange(range, (b, ch, v, d) => {
       if (ch !== curCh) {
         if (lines.length) lines.push('');
         lines.push(`〈${fullBook} ${chapterLabel(b, ch)}〉`);
         curCh = ch;
       }
-      lines.push(`${v}. ${text}`);
+      if (view === 'BOTH') {
+        lines.push(`${v}. [개역] ${d.gae}`);
+        if (d.sae) lines.push(`   [새번역] ${d.sae}`);
+      } else {
+        const text = view === 'GAE' ? d.gae : (d.sae || d.gae);
+        lines.push(`${v}. ${text}`);
+      }
     });
     lines.push('');
   }
@@ -337,6 +382,16 @@ function render() {
 }
 
 // === 헤더 ===
+function renderBibleToggle() {
+  const v = state.bibleView || 'GAE';
+  return `
+    <div class="bible-toggle" role="tablist">
+      <button class="${v==='GAE'?'active':''}" data-view="GAE">개역개정</button>
+      <button class="${v==='SAENEW'?'active':''}" data-view="SAENEW">새번역</button>
+      <button class="${v==='BOTH'?'active':''}" data-view="BOTH">📖 비교</button>
+    </div>`;
+}
+
 function renderHeader() {
   const title = effectiveTitle();
   return `
@@ -654,7 +709,7 @@ function renderMain() {
           <p>📖 오늘은 성경 본문 대신 외부 교재를 읽어요.</p>
           <p class="study-text">${escapeHtml(entry.s || '')}</p>
         </div>` :
-        `<div class="passage-body">${renderRangesHTML(entry.r)}</div>`}
+        `${renderBibleToggle()}<div class="passage-body">${renderRangesHTML(entry.r)}</div>`}
     </div>
 
     <div class="actions">
@@ -707,6 +762,13 @@ function bindMain() {
   if ($('settingsBtn')) $('settingsBtn').onclick = () => { state.view = 'settings'; saveState(); render(); };
   if ($('membersBtn')) $('membersBtn').onclick = () => { state.view = 'members'; saveState(); render(); };
   if ($('moreMembersBtn')) $('moreMembersBtn').onclick = () => { state.view = 'members'; saveState(); render(); };
+  document.querySelectorAll('.bible-toggle button').forEach(b => {
+    b.onclick = () => {
+      state.bibleView = b.dataset.view;
+      saveState();
+      render();
+    };
+  });
 }
 
 async function shareDay() {
