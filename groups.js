@@ -21,24 +21,40 @@
   let currentUser = null;
   let groupUnsub = null;
   let membersUnsub = null;
+  let authChangeCallbacks = [];
 
-  auth.onAuthStateChanged(user => { currentUser = user; });
-
-  // 익명 로그인 (즉시 호출)
-  const authReadyPromise = (async () => {
-    try {
-      if (!auth.currentUser) {
-        const cred = await auth.signInAnonymously();
-        currentUser = cred.user;
+  // 인증 상태: 첫 번째 onAuthStateChanged 이벤트를 기다린 뒤
+  // 저장된 사용자가 없으면 익명 로그인 (race condition 방지)
+  const authReadyPromise = new Promise((resolve, reject) => {
+    let firstFired = false;
+    auth.onAuthStateChanged(async (user) => {
+      const prevUid = currentUser ? currentUser.uid : null;
+      currentUser = user;
+      if (!firstFired) {
+        firstFired = true;
+        if (user) {
+          resolve(user);
+        } else {
+          try {
+            const cred = await auth.signInAnonymously();
+            currentUser = cred.user;
+            resolve(cred.user);
+          } catch (e) {
+            console.error('Anonymous sign-in failed:', e);
+            reject(e);
+          }
+        }
       } else {
-        currentUser = auth.currentUser;
+        // 후속 상태 변경 (Google 로그인/로그아웃 등)
+        const newUid = user ? user.uid : null;
+        if (newUid !== prevUid) {
+          authChangeCallbacks.forEach(cb => cb(user, prevUid));
+        }
       }
-      return currentUser;
-    } catch (e) {
-      console.error('Anonymous sign-in failed:', e);
-      throw e;
-    }
-  })();
+    });
+  });
+
+  function onAuthChange(cb) { authChangeCallbacks.push(cb); }
 
   function genCode(len = 6) {
     // 헷갈리는 글자 제외 (0/1/I/O)
@@ -148,9 +164,55 @@
     return currentUser ? currentUser.uid : null;
   }
 
+  function getUserInfo() {
+    if (!currentUser) return null;
+    const google = (currentUser.providerData || []).find(p => p.providerId === 'google.com');
+    return {
+      uid: currentUser.uid,
+      isAnonymous: currentUser.isAnonymous,
+      googleEmail: google ? google.email : null,
+      googleName: google ? google.displayName : null,
+    };
+  }
+
+  // Google 로그인 — 익명 사용자면 연결(link), 이미 연결된 계정이면 sign-in
+  async function linkOrSignInGoogle() {
+    await ensureSignedIn();
+    const provider = new firebase.auth.GoogleAuthProvider();
+    try {
+      // 현재 익명 사용자 → Google 계정 연결 (같은 UID 유지)
+      const result = await currentUser.linkWithPopup(provider);
+      return { action: 'linked', user: result.user };
+    } catch (e) {
+      if (e.code === 'auth/credential-already-in-use' || e.code === 'auth/email-already-in-use') {
+        // 이 Google 계정은 다른 기기에서 이미 연결됨 → 기존 계정으로 sign-in
+        const cred = e.credential || firebase.auth.GoogleAuthProvider.credentialFromError(e);
+        if (cred) {
+          const result = await auth.signInWithCredential(cred);
+          return { action: 'signed-in', user: result.user };
+        }
+        // credential 없는 경우 → 직접 sign-in popup
+        const result = await auth.signInWithPopup(provider);
+        return { action: 'signed-in', user: result.user };
+      }
+      throw e;
+    }
+  }
+
+  async function signOutToAnonymous() {
+    await auth.signOut();
+    // 자동으로 onAuthStateChanged → null → signInAnonymously 재실행
+    // 하지만 우리 init은 1회성이라 명시적으로 재로그인
+    const cred = await auth.signInAnonymously();
+    currentUser = cred.user;
+    return cred.user;
+  }
+
   window.Groups = {
     authReady: authReadyPromise,
     getUserId,
+    getUserInfo,
+    onAuthChange,
     createGroup,
     getGroup,
     joinGroup,
@@ -158,6 +220,8 @@
     subscribeGroup,
     unsubscribe,
     setReadDays,
-    updateGroupMeta
+    updateGroupMeta,
+    linkOrSignInGoogle,
+    signOutToAnonymous,
   };
 })();

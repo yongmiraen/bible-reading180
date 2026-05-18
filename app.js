@@ -852,9 +852,35 @@ function renderSettings() {
         <div class="divider"></div>
         <button class="danger-outline" id="resetReadBtn">읽음 진도만 초기화</button>
       `}
+      <div class="divider"></div>
+      ${renderGoogleSyncRow()}
       <button class="danger" id="resetAllBtn">전체 초기화 (처음부터)</button>
       <p class="hint">전체 초기화는 모든 로컬 데이터를 지웁니다. 조에서도 나가게 됩니다.</p>
     </div>`;
+}
+
+function renderGoogleSyncRow() {
+  const info = Groups.getUserInfo ? Groups.getUserInfo() : null;
+  if (info && info.googleEmail) {
+    return `
+      <div class="form-row" style="color:var(--text)">
+        <b>🔗 Google 동기화 사용 중</b><br>
+        <span style="color:var(--muted);font-size:.85rem">${escapeHtml(info.googleEmail)}</span>
+      </div>
+      <button class="danger-outline" id="googleSignOutBtn">Google 로그아웃</button>
+      <p class="hint" style="margin-top:6px">로그아웃하면 이 기기는 다시 익명 계정이 됩니다. 같은 Google 계정으로 다시 로그인하면 데이터가 복구돼요.</p>
+    `;
+  }
+  return `
+    <div class="form-row" style="color:var(--text)">
+      <b>🔗 다른 기기에서도 사용하기</b><br>
+      <span style="color:var(--muted);font-size:.85rem">Google 계정으로 연결하면 PC·모바일에서 같은 사람으로 인식돼요</span>
+    </div>
+    <button class="primary" id="googleLinkBtn" style="background:#fff;color:var(--text);border:1.5px solid var(--line)">
+      <span style="display:inline-block;width:16px;height:16px;vertical-align:-3px;margin-right:8px;background:url('data:image/svg+xml;utf8,<svg xmlns=%22http://www.w3.org/2000/svg%22 viewBox=%220 0 48 48%22><path fill=%22%23FFC107%22 d=%22M43.6 20.1H42V20H24v8h11.3c-1.6 4.7-6.1 8-11.3 8-6.6 0-12-5.4-12-12s5.4-12 12-12c3.1 0 5.8 1.2 7.9 3.1l5.7-5.7C34.6 6.1 29.6 4 24 4 12.9 4 4 12.9 4 24s8.9 20 20 20 20-8.9 20-20c0-1.3-.1-2.6-.4-3.9z%22/><path fill=%22%23FF3D00%22 d=%22M6.3 14.7l6.6 4.8c1.8-4.4 6-7.5 11-7.5 3.1 0 5.8 1.2 7.9 3.1l5.7-5.7C34.6 6.1 29.6 4 24 4 16.1 4 9.3 8.4 6.3 14.7z%22/><path fill=%22%234CAF50%22 d=%22M24 44c5.5 0 10.5-2.1 14.3-5.5l-6.6-5.6C29.6 34.3 26.9 35 24 35c-5.2 0-9.6-3.3-11.2-7.9l-6.6 5.1C9.3 39.6 16.1 44 24 44z%22/><path fill=%22%231976D2%22 d=%22M43.6 20.1H42V20H24v8h11.3c-.8 2.3-2.3 4.3-4.3 5.7l6.6 5.6c-.5.4 7.4-5.4 7.4-15.3 0-1.3-.1-2.6-.4-3.9z%22/></svg>') center/contain no-repeat"></span>
+      Google로 동기화하기
+    </button>
+  `;
 }
 
 function bindSettings() {
@@ -909,6 +935,43 @@ function bindSettings() {
     saveState();
     toast('진도가 초기화되었어요');
     render();
+  };
+  if ($('googleLinkBtn')) $('googleLinkBtn').onclick = async () => {
+    const btn = $('googleLinkBtn');
+    btn.disabled = true; btn.textContent = '연결 중...';
+    try {
+      const res = await Groups.linkOrSignInGoogle();
+      if (res.action === 'linked') {
+        toast('Google 계정에 연결되었어요. 다른 기기에서도 같은 계정으로 동기화돼요.');
+        render();
+      } else {
+        // sign-in (다른 기기의 기존 계정으로 로그인됨) → UID가 바뀌었으므로 새로고침
+        alert('기존 Google 계정으로 로그인했어요. 데이터를 불러오기 위해 페이지를 새로고침합니다.');
+        location.reload();
+      }
+    } catch (e) {
+      btn.disabled = false;
+      if (e.code === 'auth/popup-closed-by-user' || e.code === 'auth/cancelled-popup-request') {
+        btn.textContent = 'Google로 동기화하기';
+        return;
+      }
+      alert('연결 실패: ' + (e.message || e.code || e));
+      render();
+    }
+  };
+  if ($('googleSignOutBtn')) $('googleSignOutBtn').onclick = async () => {
+    if (!confirm('Google 로그아웃하시겠어요?\n이 기기는 다시 익명 계정으로 돌아갑니다 (다른 기기와 분리됨). 같은 Google 계정으로 다시 로그인하면 복구 가능.')) return;
+    try {
+      Groups.unsubscribe();
+      await Groups.signOutToAnonymous();
+      state = defaultState();
+      saveState();
+      volatile.groupData = null;
+      volatile.members = [];
+      location.reload();
+    } catch (e) {
+      alert('로그아웃 실패: ' + (e.message || e));
+    }
   };
   $('resetAllBtn').onclick = async () => {
     if (!confirm('전체 초기화 후 처음부터 시작하시겠어요?\n조 모드라면 조에서도 나갑니다.')) return;
