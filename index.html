@@ -121,11 +121,25 @@ header h1{font-size:1.15rem;margin:0;font-weight:700;letter-spacing:-.5px}
 .actions{display:grid;grid-template-columns:1fr 1fr 1fr;gap:8px;margin-top:12px}
 .actions button{
   padding:12px 4px;background:#fff;border:1.5px solid var(--line);border-radius:12px;
-  font-size:.88rem;font-weight:600;
+  font-size:.88rem;font-weight:600;transition:all .15s;
 }
 .actions button:hover{border-color:var(--accent);color:var(--accent)}
-.check.checked{background:var(--good);color:#fff;border-color:var(--good)}
-.check.checked:hover{background:var(--good);color:#fff}
+.check.checked{
+  background:var(--good);color:#fff;border-color:var(--good);
+  box-shadow:0 3px 12px rgba(22,163,74,.35);
+  transform:scale(1.02);
+}
+.check.checked:hover{background:#15803d;color:#fff;border-color:#15803d}
+
+/* Read banner on passage card */
+.read-banner{
+  background:linear-gradient(90deg,#16a34a,#15803d);color:#fff;
+  padding:10px 16px;margin:-20px -20px 14px;
+  border-radius:16px 16px 0 0;font-weight:700;font-size:.92rem;
+  display:flex;align-items:center;justify-content:center;gap:8px;
+  letter-spacing:.3px;
+}
+.passage-card.is-read{border-color:var(--good);border-width:2px;padding:19px}
 
 /* List view */
 .list-toolbar{display:flex;align-items:center;justify-content:space-between;margin:8px 0 12px}

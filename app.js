@@ -614,7 +614,8 @@ function renderMain() {
       <button id="nextDay" ${day>=TOTAL_DAYS?'disabled':''}>다음 →</button>
     </nav>
 
-    <div class="card passage-card">
+    <div class="card passage-card ${isRead?'is-read':''}">
+      ${isRead ? '<div class="read-banner">✓ 오늘 본문 읽기 완료</div>' : ''}
       <h2 class="passage-label">${escapeHtml(entry.l)}</h2>
       ${entry.p ? `<div class="passage-ref">📚 교재 ${entry.p}</div>` : ''}
       ${entry.r.length === 0 ?
