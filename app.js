@@ -631,7 +631,6 @@ function renderMain() {
 
   return `
     ${renderHeader()}
-    ${state.mode === 'group' ? renderMembersPreview() : ''}
     <div class="progress-wrap">
       <div class="progress-bar"><div class="progress-fill" style="width:${pct}%"></div></div>
       <div class="progress-text">${totalRead} / ${TOTAL_DAYS}일 (${pct}%)</div>
