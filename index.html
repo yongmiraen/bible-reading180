@@ -257,7 +257,17 @@ header h1{font-size:1.15rem;margin:0;font-weight:700;letter-spacing:-.5px}
   display:flex;align-items:center;gap:14px;
 }
 .mode-card:hover{border-color:var(--accent);background:var(--accent-soft)}
-.mode-icon{font-size:1.8rem}
+.mode-icon{font-size:1.8rem;display:flex;align-items:center;justify-content:center}
+
+/* Fluent 3D emoji */
+.emoji-3d{display:inline-block;vertical-align:-0.18em;line-height:1}
+.emoji-3d.sm{width:1.1em;height:1.1em;vertical-align:-0.22em}
+.emoji-3d.md{width:48px;height:48px;vertical-align:middle}
+.emoji-3d.lg{width:96px;height:96px;vertical-align:middle}
+.emoji-3d.xl{width:128px;height:128px;vertical-align:middle}
+.emoji-3d.hero{width:96px;height:96px;display:block;margin:8px auto 14px}
+.setup h1 .emoji-3d{margin-right:6px}
+.status-card .emoji-3d{display:block;margin:0 auto 12px}
 .mode-text{flex:1}
 .mode-title{font-weight:700;font-size:1.02rem;margin-bottom:2px}
 .mode-desc{font-size:.82rem;color:var(--muted);line-height:1.5}

@@ -225,6 +225,15 @@ function escapeHtml(s) {
   return String(s).replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;');
 }
 
+// Microsoft Fluent Emoji 3D — MIT 라이선스
+// 이름은 폴더명 그대로, 파일은 소문자+언더스코어
+const FLUENT_BASE = 'https://cdn.jsdelivr.net/gh/microsoft/fluentui-emoji@main/assets/';
+function emoji3d(name, sizeClass = 'md', alt = '') {
+  const file = name.toLowerCase().replace(/ /g, '_') + '_3d.png';
+  const url = FLUENT_BASE + encodeURIComponent(name) + '/3D/' + file;
+  return `<img class="emoji-3d ${sizeClass}" src="${url}" alt="${escapeHtml(alt)}" loading="lazy">`;
+}
+
 function relativeTime(ts) {
   if (!ts) return '활동 기록 없음';
   let date;
@@ -441,14 +450,14 @@ function renderModeSelect() {
       <p class="lead">180일 동안 함께 통독해요</p>
       <div class="mode-choice">
         <button class="mode-card" id="modeSolo">
-          <span class="mode-icon">🙂</span>
+          <span class="mode-icon">${emoji3d('Slightly smiling face','md','혼자')}</span>
           <span class="mode-text">
             <div class="mode-title">혼자 사용</div>
             <div class="mode-desc">내 진도만 표시. 인터넷 없이도 사용 가능</div>
           </span>
         </button>
         <button class="mode-card" id="modeGroup">
-          <span class="mode-icon">👥</span>
+          <span class="mode-icon">${emoji3d('Busts in silhouette','md','조와 함께')}</span>
           <span class="mode-text">
             <div class="mode-title">조와 함께</div>
             <div class="mode-desc">조원들과 진도를 공유하며 통독</div>
@@ -512,14 +521,14 @@ function renderGroupChoice() {
       <p class="lead">새로 만드시겠어요, 참가하시겠어요?</p>
       <div class="mode-choice">
         <button class="mode-card" id="goCreate">
-          <span class="mode-icon">✨</span>
+          <span class="mode-icon">${emoji3d('Sparkles','md','새 조 만들기')}</span>
           <span class="mode-text">
             <div class="mode-title">새 조 만들기</div>
             <div class="mode-desc">조장이 되어 초대 링크 생성</div>
           </span>
         </button>
         <button class="mode-card" id="goJoin">
-          <span class="mode-icon">🔗</span>
+          <span class="mode-icon">${emoji3d('Link','md','초대 참가')}</span>
           <span class="mode-text">
             <div class="mode-title">초대받은 조 참가</div>
             <div class="mode-desc">6자리 초대 코드 입력</div>
@@ -646,8 +655,9 @@ function renderInviteShare() {
   const link = `${SITE_URL}?join=${code}`;
   return `
     ${renderHeader()}
-    <div class="card">
-      <h2 style="text-align:center;margin-top:4px">🎉 조가 만들어졌어요!</h2>
+    <div class="card" style="text-align:center">
+      ${emoji3d('Party popper','lg')}
+      <h2 style="margin-top:4px">조가 만들어졌어요!</h2>
       <p style="text-align:center;color:var(--muted);margin-top:0">아래 링크를 조원들에게 공유하세요</p>
       <div class="invite-box">
         <div style="font-size:.8rem;color:var(--muted)">초대 코드</div>
@@ -692,7 +702,8 @@ function renderMain() {
   if (day == null || day < 1) {
     return `${renderHeader()}
     <div class="card status-card">
-      <h2>📅 통독 시작 전</h2>
+      ${emoji3d('Spiral calendar','lg')}
+      <h2>통독 시작 전</h2>
       <p>시작일: <b>${effectiveStartDate()}</b></p>
       ${day != null ? `<p><b>${1-day}일</b> 후에 시작됩니다.</p>` : ''}
     </div>`;
@@ -700,7 +711,8 @@ function renderMain() {
   if (day > TOTAL_DAYS) {
     return `${renderHeader()}
     <div class="card status-card">
-      <h2>🎉 통독 완주를 축하합니다!</h2>
+      ${emoji3d('Party popper','xl')}
+      <h2>통독 완주를 축하합니다!</h2>
       <p>총 ${TOTAL_DAYS}일 완료 (${totalRead}일 체크)</p>
     </div>`;
   }
@@ -962,7 +974,8 @@ function renderFeedback() {
     ${renderHeader()}
     <button class="back-btn" id="backBtn">← 돌아가기</button>
     <div class="card">
-      <h2 style="margin-top:4px">💬 건의/문의 보내기</h2>
+      <div style="text-align:center">${emoji3d('Speech balloon','lg')}</div>
+      <h2 style="margin-top:4px;text-align:center">건의/문의 보내기</h2>
       <p style="color:var(--muted);font-size:.9rem;margin-top:4px">개선 아이디어, 버그 신고, 문의 등 자유롭게 보내주세요. 직접 확인하고 답변드려요.</p>
       <label class="form-row">이름 <span class="optional">(선택)</span>
         <input type="text" id="fbName" maxlength="40" value="${escapeHtml(state.displayName||state.groupName||'')}">
