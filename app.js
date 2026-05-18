@@ -157,9 +157,11 @@ function escapeHtml(s) {
 
 // === 진도 토글 (자동 동기화) ===
 function toggleRead(day) {
-  if (state.readDays[day]) delete state.readDays[day];
+  const wasRead = !!state.readDays[day];
+  if (wasRead) delete state.readDays[day];
   else state.readDays[day] = true;
   saveState();
+  toast(wasRead ? `Day ${day} 읽음 표시를 취소했어요` : `Day ${day} 읽음 완료 ✓`);
   if (state.mode === 'group' && state.groupId) {
     volatile.syncStatus = 'syncing';
     Groups.setReadDays(state.groupId, state.readDays)
