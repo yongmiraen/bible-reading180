@@ -233,7 +233,12 @@ function rangesToText(ranges) {
 }
 
 function escapeHtml(s) {
-  return String(s).replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;');
+  return String(s)
+    .replace(/&/g,'&amp;')
+    .replace(/</g,'&lt;')
+    .replace(/>/g,'&gt;')
+    .replace(/"/g,'&quot;')
+    .replace(/'/g,'&#39;');
 }
 
 // Microsoft Fluent Emoji 3D — MIT 라이선스
@@ -1027,11 +1032,9 @@ function bindFeedback() {
     const day = calcCurrentDay();
     const context = [
       `모드: ${state.mode || '미설정'}`,
-      state.mode === 'group' ? `조: ${effectiveTitle()} (${state.groupId})` : `시작일: ${state.startDate || '-'}`,
+      state.mode === 'group' ? `조: ${effectiveTitle()}` : `시작일: ${state.startDate || '-'}`,
       `Day: ${day != null ? day : '-'} / ${TOTAL_DAYS}`,
       `읽은 일수: ${Object.keys(state.readDays).filter(k=>state.readDays[k]).length}`,
-      `UID: ${volatile.userId || '-'}`,
-      `User-Agent: ${navigator.userAgent}`,
       `URL: ${SITE_URL}`,
     ].join('\n');
 
