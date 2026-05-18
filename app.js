@@ -150,25 +150,36 @@ function renderRangesHTML(ranges) {
     const fullBook = BOOK_NAMES[book] || book;
     parts.push(`<div class="passage-block"><h3 class="book-title">${fullBook}</h3>`);
     let curCh = null, chBuf = [], chHeader = null;
+    let lastSubKey = null;
     eachVerseInRange(range, (b, ch, v, d) => {
       if (ch !== curCh) {
         if (chBuf.length) parts.push(`<div class="chapter"><h4 class="ch-title">${chHeader}</h4>${chBuf.join('')}</div>`);
         chBuf = []; curCh = ch; chHeader = chapterLabel(b, ch);
+        lastSubKey = null;
       }
-      // 소제목 (한국어 번역에만 있음)
+      // 소제목 (한국어 번역에만 있음) — 연속 중복 제거
       if (d.sub) {
         const koVers = view.filter(x => x !== 'NIV');
+        let subKey = null, subHtml = null;
         if (koVers.length === 1) {
           const s = d.sub[koVers[0]];
-          if (s) chBuf.push(`<div class="subtitle">${escapeHtml(s)}</div>`);
+          if (s) {
+            subKey = koVers[0] + '\n' + s;
+            subHtml = `<div class="subtitle">${escapeHtml(s)}</div>`;
+          }
         } else if (koVers.length === 2) {
           const a = d.sub.GAE, c = d.sub.SAENEW;
           if (a || c) {
+            subKey = (a||'') + '|' + (c||'');
             const subLines = [];
             if (a) subLines.push(`<span class="sub-line gae">${escapeHtml(a)}</span>`);
             if (c) subLines.push(`<span class="sub-line saenew">${escapeHtml(c)}</span>`);
-            chBuf.push(`<div class="subtitle compare">${subLines.join('')}</div>`);
+            subHtml = `<div class="subtitle compare">${subLines.join('')}</div>`;
           }
+        }
+        if (subKey && subKey !== lastSubKey) {
+          chBuf.push(subHtml);
+          lastSubKey = subKey;
         }
       }
       // 본문
