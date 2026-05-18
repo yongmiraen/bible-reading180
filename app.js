@@ -156,6 +156,30 @@ function escapeHtml(s) {
   return String(s).replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;');
 }
 
+function relativeTime(ts) {
+  if (!ts) return '활동 기록 없음';
+  let date;
+  try { date = ts.toDate ? ts.toDate() : (ts.seconds ? new Date(ts.seconds*1000) : new Date(ts)); }
+  catch (e) { return ''; }
+  const diffMs = Date.now() - date.getTime();
+  if (diffMs < 0) return '방금 전';
+  const sec = Math.floor(diffMs / 1000);
+  if (sec < 60) return '방금 전';
+  const min = Math.floor(sec / 60);
+  if (min < 60) return `${min}분 전`;
+  const hr = Math.floor(min / 60);
+  if (hr < 24) return `${hr}시간 전`;
+  const days = Math.floor(hr / 24);
+  if (days < 7) return `${days}일 전`;
+  if (days < 30) return `${Math.floor(days/7)}주 전`;
+  return `${Math.floor(days/30)}달 전`;
+}
+
+function countReadDays(readDays) {
+  if (!readDays) return 0;
+  return Object.keys(readDays).filter(k => readDays[k]).length;
+}
+
 // === 진도 토글 (자동 동기화) ===
 function toggleRead(day) {
   const wasRead = !!state.readDays[day];
@@ -647,18 +671,15 @@ function renderMain() {
 
 function renderMembersPreview() {
   if (!volatile.members.length) return '';
-  const top = [...volatile.members].sort((a,b) => {
-    const ad = Object.keys(a.readDays||{}).filter(k=>a.readDays[k]).length;
-    const bd = Object.keys(b.readDays||{}).filter(k=>b.readDays[k]).length;
-    return bd - ad;
-  }).slice(0, 4);
+  const top = [...volatile.members].sort((a,b) => countReadDays(b.readDays) - countReadDays(a.readDays)).slice(0, 4);
   const rows = top.map(m => {
     const isMe = m.uid === volatile.userId;
-    const days = Object.keys(m.readDays||{}).filter(k=>m.readDays[k]).length;
+    const days = countReadDays(m.readDays);
     const pct = Math.round(days/TOTAL_DAYS*100);
+    const last = relativeTime(m.updatedAt);
     return `<div class="member-row ${isMe?'me':''}">
       <span class="member-name">${escapeHtml(m.displayName || '익명')}${isMe?'<span class="you-tag">나</span>':''}</span>
-      <span class="member-progress"><b>${days}</b>일 (${pct}%)</span>
+      <span class="member-progress"><b>${days}</b>일 (${pct}%) <span class="member-last">· ${last}</span></span>
     </div>`;
   }).join('');
   const more = volatile.members.length > 4 ? `<span class="more" id="moreMembersBtn">전체 보기 →</span>` : `<span class="more" id="moreMembersBtn">자세히 →</span>`;
@@ -743,21 +764,47 @@ function toast(msg) {
 // === 일정 목록 ===
 function renderList() {
   const cur = calcCurrentDay();
+  const isGroup = state.mode === 'group' && volatile.members.length > 0;
+  const memberCount = volatile.members.length;
+
+  // 일자별: 어떤 조원이 읽었는지 사전 계산
+  const dayReaders = {};
+  if (isGroup) {
+    for (const m of volatile.members) {
+      const rd = m.readDays || {};
+      for (const k in rd) {
+        if (rd[k]) {
+          if (!dayReaders[k]) dayReaders[k] = [];
+          dayReaders[k].push(m);
+        }
+      }
+    }
+  }
+
   const items = SCHEDULE.map(d => {
     const isRead = !!state.readDays[d.d];
     const isToday = (d.d === cur);
     const isStudy = d.r.length === 0;
+    let stat;
+    if (isGroup) {
+      const readers = dayReaders[d.d] || [];
+      const names = readers.map(m => escapeHtml(m.displayName || '익명')).join(', ');
+      stat = `<span class="li-group-stat ${readers.length===memberCount?'all':''}" title="${names || '아직 읽은 조원 없음'}">${readers.length}/${memberCount}</span>`;
+    } else {
+      stat = `<span class="li-check">${isRead ? '✓' : ''}</span>`;
+    }
     return `<li class="list-item ${isRead?'read':''} ${isToday?'today':''} ${isStudy?'study':''}" data-day="${d.d}">
       <span class="li-num">${d.d}</span>
       <span class="li-label">${escapeHtml(d.l)}</span>
-      <span class="li-check">${isRead ? '✓' : ''}</span>
+      ${stat}
     </li>`;
   }).join('');
+
   return `
     ${renderHeader()}
     <div class="list-toolbar">
       <button class="back-btn" id="backBtn">← 돌아가기</button>
-      <span class="list-summary">${Object.keys(state.readDays).filter(k=>state.readDays[k]).length} / ${TOTAL_DAYS} 완료</span>
+      <span class="list-summary">${isGroup ? `조원 ${memberCount}명 · ` : ''}내 진도 ${countReadDays(state.readDays)} / ${TOTAL_DAYS}</span>
     </div>
     <ul class="day-list">${items}</ul>
   `;
@@ -785,18 +832,16 @@ function scrollToToday() {
 
 // === 조원 보기 ===
 function renderMembers() {
-  const sorted = [...volatile.members].sort((a,b) => {
-    const ad = Object.keys(a.readDays||{}).filter(k=>a.readDays[k]).length;
-    const bd = Object.keys(b.readDays||{}).filter(k=>b.readDays[k]).length;
-    return bd - ad;
-  });
+  const sorted = [...volatile.members].sort((a,b) => countReadDays(b.readDays) - countReadDays(a.readDays));
   const rows = sorted.map(m => {
     const isMe = m.uid === volatile.userId;
-    const days = Object.keys(m.readDays||{}).filter(k=>m.readDays[k]).length;
+    const days = countReadDays(m.readDays);
     const pct = Math.round(days/TOTAL_DAYS*100);
+    const last = relativeTime(m.updatedAt);
     return `<div class="member-row ${isMe?'me':''}">
       <span class="member-name">${escapeHtml(m.displayName || '익명')}${isMe?'<span class="you-tag">나</span>':''}</span>
       <span class="member-progress"><b>${days}</b>일 (${pct}%)</span>
+      <span class="member-last-full">마지막 활동: ${last}</span>
       <div class="member-bar"><div class="member-bar-fill" style="width:${pct}%"></div></div>
     </div>`;
   }).join('');
