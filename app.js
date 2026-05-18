@@ -739,14 +739,7 @@ function renderMain() {
       <div class="progress-text">${totalRead} / ${TOTAL_DAYS}일 (${pct}%)</div>
     </div>
 
-    <nav class="day-nav">
-      <button id="prevDay" ${day<=1?'disabled':''}>← 이전</button>
-      <div class="day-indicator">
-        <div class="day-num">Day ${day}</div>
-        ${isToday ? '<span class="today-tag">오늘</span>' : `<button class="goto-today" id="todayBtn">오늘로 (Day ${realToday})</button>`}
-      </div>
-      <button id="nextDay" ${day>=TOTAL_DAYS?'disabled':''}>다음 →</button>
-    </nav>
+    ${renderDayNav(day, realToday, isToday)}
 
     <div class="card passage-card ${isRead?'is-read':''}">
       ${isRead ? '<div class="read-banner">✓ 오늘 본문 읽기 완료</div>' : ''}
@@ -767,8 +760,21 @@ function renderMain() {
       <button class="share" id="shareBtn">📤 공유</button>
       <button class="copy" id="copyBtn">📋 본문 복사</button>
     </div>
+    ${renderDayNav(day, realToday, isToday)}
     ${volatile.syncStatus === 'error' ? '<div class="sync-status sync-error">⚠ 동기화 오류 — 인터넷 연결을 확인해주세요</div>' : ''}
   `;
+}
+
+function renderDayNav(day, realToday, isToday) {
+  return `
+    <nav class="day-nav">
+      <button class="prev-day-btn" ${day<=1?'disabled':''}>← 이전</button>
+      <div class="day-indicator">
+        <div class="day-num">Day ${day}</div>
+        ${isToday ? '<span class="today-tag">오늘</span>' : `<button class="goto-today goto-today-btn">오늘로 (Day ${realToday})</button>`}
+      </div>
+      <button class="next-day-btn" ${day>=TOTAL_DAYS?'disabled':''}>다음 →</button>
+    </nav>`;
 }
 
 function renderMembersPreview() {
@@ -800,9 +806,9 @@ function bindMain() {
     state.viewDay = (n === calcCurrentDay()) ? null : n;
     saveState(); render();
   };
-  if ($('prevDay')) $('prevDay').onclick = () => goDay(getViewDay() - 1);
-  if ($('nextDay')) $('nextDay').onclick = () => goDay(getViewDay() + 1);
-  if ($('todayBtn')) $('todayBtn').onclick = () => { state.viewDay = null; saveState(); render(); };
+  document.querySelectorAll('.prev-day-btn').forEach(b => b.onclick = () => goDay(getViewDay() - 1));
+  document.querySelectorAll('.next-day-btn').forEach(b => b.onclick = () => goDay(getViewDay() + 1));
+  document.querySelectorAll('.goto-today-btn').forEach(b => b.onclick = () => { state.viewDay = null; saveState(); render(); });
   if ($('checkBtn')) $('checkBtn').onclick = () => toggleRead(getViewDay());
   if ($('shareBtn')) $('shareBtn').onclick = shareDay;
   if ($('copyBtn')) $('copyBtn').onclick = copyDay;
