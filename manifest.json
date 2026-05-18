@@ -1,0 +1,20 @@
+{
+  "name": "성경 통독 180일",
+  "short_name": "성경통독",
+  "description": "조원들과 함께하는 180일 성경 통독",
+  "start_url": "./index.html",
+  "scope": "./",
+  "display": "standalone",
+  "background_color": "#faf8f3",
+  "theme_color": "#0f766e",
+  "lang": "ko",
+  "orientation": "portrait",
+  "icons": [
+    {
+      "src": "icon.svg",
+      "sizes": "any",
+      "type": "image/svg+xml",
+      "purpose": "any"
+    }
+  ]
+}
