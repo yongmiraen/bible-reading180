@@ -676,10 +676,9 @@ function renderMembersPreview() {
     const isMe = m.uid === volatile.userId;
     const days = countReadDays(m.readDays);
     const pct = Math.round(days/TOTAL_DAYS*100);
-    const last = relativeTime(m.updatedAt);
     return `<div class="member-row ${isMe?'me':''}">
       <span class="member-name">${escapeHtml(m.displayName || '익명')}${isMe?'<span class="you-tag">나</span>':''}</span>
-      <span class="member-progress"><b>${days}</b>일 (${pct}%) <span class="member-last">· ${last}</span></span>
+      <span class="member-progress"><b>${days}</b>일 (${pct}%)</span>
     </div>`;
   }).join('');
   const more = volatile.members.length > 4 ? `<span class="more" id="moreMembersBtn">전체 보기 →</span>` : `<span class="more" id="moreMembersBtn">자세히 →</span>`;
@@ -841,7 +840,7 @@ function renderMembers() {
     return `<div class="member-row ${isMe?'me':''}">
       <span class="member-name">${escapeHtml(m.displayName || '익명')}${isMe?'<span class="you-tag">나</span>':''}</span>
       <span class="member-progress"><b>${days}</b>일 (${pct}%)</span>
-      <span class="member-last-full">마지막 활동: ${last}</span>
+      <span class="member-last-full">마지막 활동 <b>${last}</b></span>
       <div class="member-bar"><div class="member-bar-fill" style="width:${pct}%"></div></div>
     </div>`;
   }).join('');
