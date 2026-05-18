@@ -4,6 +4,7 @@
 const TOTAL_DAYS = 180;
 const STORAGE_KEY = 'bible180_state_v2';
 const SITE_URL = location.origin + location.pathname;
+const FEEDBACK_ENDPOINT = 'https://formspree.io/f/mdajorvp';
 
 // === 장별 마지막 절 캐시 ===
 const CHAPTER_LENGTHS = {};
@@ -298,6 +299,11 @@ function render() {
   if (state.view === 'members') {
     app.innerHTML = renderMembers();
     bindMembers();
+    return;
+  }
+  if (state.view === 'feedback') {
+    app.innerHTML = renderFeedback();
+    bindFeedback();
     return;
   }
 
@@ -810,6 +816,81 @@ function bindMembers() {
   if (document.getElementById('membersBtn')) document.getElementById('membersBtn').onclick = () => {};
 }
 
+// === 건의사항 ===
+function renderFeedback() {
+  return `
+    ${renderHeader()}
+    <button class="back-btn" id="backBtn">← 돌아가기</button>
+    <div class="card">
+      <h2 style="margin-top:4px">💬 건의/문의 보내기</h2>
+      <p style="color:var(--muted);font-size:.9rem;margin-top:4px">개선 아이디어, 버그 신고, 문의 등 자유롭게 보내주세요. 직접 확인하고 답변드려요.</p>
+      <label class="form-row">이름 <span class="optional">(선택)</span>
+        <input type="text" id="fbName" maxlength="40" value="${escapeHtml(state.displayName||state.groupName||'')}">
+      </label>
+      <label class="form-row">이메일 <span class="optional">(답장 받으려면)</span>
+        <input type="email" id="fbEmail" placeholder="answer@example.com">
+      </label>
+      <label class="form-row">내용 *
+        <textarea id="fbMessage" rows="6" maxlength="2000" placeholder="자유롭게 적어주세요..." style="width:100%;font-family:inherit;font-size:16px;padding:.7em .9em;border:1.5px solid var(--line);border-radius:10px;background:#fff;color:var(--text);margin-top:.4em;resize:vertical"></textarea>
+      </label>
+      <button class="primary" id="fbSendBtn">보내기</button>
+      <p class="hint" id="fbStatus">＊ 표시는 필수 항목입니다</p>
+    </div>`;
+}
+
+function bindFeedback() {
+  const $ = id => document.getElementById(id);
+  $('backBtn').onclick = () => { state.view = 'settings'; saveState(); render(); };
+  if ($('listBtn')) $('listBtn').onclick = () => { state.view = 'list'; saveState(); render(); };
+  if ($('settingsBtn')) $('settingsBtn').onclick = () => { state.view = 'settings'; saveState(); render(); };
+  if ($('membersBtn')) $('membersBtn').onclick = () => { state.view = 'members'; saveState(); render(); };
+  $('fbSendBtn').onclick = async () => {
+    const name = $('fbName').value.trim();
+    const email = $('fbEmail').value.trim();
+    const message = $('fbMessage').value.trim();
+    if (!message) { alert('내용을 입력해주세요'); return; }
+    const btn = $('fbSendBtn');
+    const status = $('fbStatus');
+    btn.disabled = true; btn.textContent = '보내는 중...';
+    status.textContent = '';
+
+    const day = calcCurrentDay();
+    const context = [
+      `모드: ${state.mode || '미설정'}`,
+      state.mode === 'group' ? `조: ${effectiveTitle()} (${state.groupId})` : `시작일: ${state.startDate || '-'}`,
+      `Day: ${day != null ? day : '-'} / ${TOTAL_DAYS}`,
+      `읽은 일수: ${Object.keys(state.readDays).filter(k=>state.readDays[k]).length}`,
+      `UID: ${volatile.userId || '-'}`,
+      `User-Agent: ${navigator.userAgent}`,
+      `URL: ${SITE_URL}`,
+    ].join('\n');
+
+    try {
+      const res = await fetch(FEEDBACK_ENDPOINT, {
+        method: 'POST',
+        headers: { 'Accept': 'application/json', 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          name: name || '익명',
+          email: email || '',
+          message,
+          _replyto: email || '',
+          _subject: `[성경통독] ${name||'익명'} 건의사항`,
+          context,
+        })
+      });
+      if (!res.ok) throw new Error('HTTP ' + res.status);
+      toast('보냈어요. 감사합니다 🙏');
+      state.view = 'settings';
+      saveState();
+      render();
+    } catch (e) {
+      btn.disabled = false; btn.textContent = '보내기';
+      status.innerHTML = '<span style="color:var(--bad)">전송 실패 — 인터넷 연결을 확인하거나 잠시 후 다시 시도해주세요</span>';
+      console.error('feedback', e);
+    }
+  };
+}
+
 // === 설정 ===
 function renderSettings() {
   const isGroup = state.mode === 'group' && state.groupId;
@@ -857,6 +938,9 @@ function renderSettings() {
       `}
       <div class="divider"></div>
       ${renderGoogleSyncRow()}
+      <div class="divider"></div>
+      <button class="primary" id="feedbackBtn" style="background:#fff;color:var(--text);border:1.5px solid var(--line)">💬 건의/문의 보내기</button>
+      <div class="divider"></div>
       <button class="danger" id="resetAllBtn">전체 초기화 (처음부터)</button>
       <p class="hint">전체 초기화는 모든 로컬 데이터를 지웁니다. 조에서도 나가게 됩니다.</p>
     </div>`;
@@ -975,6 +1059,9 @@ function bindSettings() {
     } catch (e) {
       alert('로그아웃 실패: ' + (e.message || e));
     }
+  };
+  if ($('feedbackBtn')) $('feedbackBtn').onclick = () => {
+    state.view = 'feedback'; saveState(); render();
   };
   $('resetAllBtn').onclick = async () => {
     if (!confirm('전체 초기화 후 처음부터 시작하시겠어요?\n조 모드라면 조에서도 나갑니다.')) return;
