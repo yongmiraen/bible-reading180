@@ -128,20 +128,17 @@ header h1{font-size:1.15rem;margin:0;font-weight:700;letter-spacing:-.5px}
   position:absolute;left:0;top:.35em;
 }
 
-/* Bible version toggle */
-.bible-toggle{
-  display:grid;grid-template-columns:1fr 1fr 1fr;
-  background:#f4f0e8;border-radius:10px;padding:3px;gap:0;margin:4px 0 14px;
+/* Bible version toggle - chip style */
+.bible-toggle.chip{display:flex;gap:6px;flex-wrap:wrap;margin:6px 0 2px}
+.bible-toggle.chip button{
+  padding:8px 14px;border-radius:99px;font-size:.85rem;font-weight:600;
+  background:#fff;color:var(--muted);border:1.5px solid var(--line);transition:.15s;
 }
-.bible-toggle button{
-  padding:9px 4px;border-radius:8px;font-size:.85rem;font-weight:600;
-  background:transparent;color:var(--muted);transition:.15s;
+.bible-toggle.chip button.active{
+  background:var(--accent);color:#fff;border-color:var(--accent);
 }
-.bible-toggle button.active{
-  background:#fff;color:var(--text);
-  box-shadow:0 1px 3px rgba(0,0,0,.08);
-}
-.bible-toggle button:not(.active):hover{color:var(--text)}
+.bible-toggle.chip button:not(.active):hover{border-color:var(--accent);color:var(--accent)}
+.bible-toggle-hint{font-size:.72rem;color:var(--muted);margin:0 0 12px 2px}
 
 /* Subtitles */
 .subtitle{
@@ -153,7 +150,7 @@ header h1{font-size:1.15rem;margin:0;font-weight:700;letter-spacing:-.5px}
 .subtitle.compare{display:flex;flex-direction:column;gap:3px;font-weight:600;font-size:.88rem}
 .sub-line{display:block;line-height:1.4}
 .sub-line.gae::before{content:"개역 "; color:var(--gold);font-weight:700;font-size:.72rem}
-.sub-line.sae::before{content:"새번역 "; color:#9333ea;font-weight:700;font-size:.72rem}
+.sub-line.saenew::before{content:"새번역 "; color:#9333ea;font-weight:700;font-size:.72rem}
 
 /* Compare mode verse */
 .verse-compare{
@@ -163,14 +160,16 @@ header h1{font-size:1.15rem;margin:0;font-weight:700;letter-spacing:-.5px}
 .verse-compare .ver-line{
   margin:0 0 .15em;line-height:1.7;font-size:1.0rem;
 }
-.verse-compare .ver-line.sae{color:#6b21a8;font-size:.96rem;padding-left:.2em}
+.verse-compare .ver-line.saenew{color:#6b21a8;font-size:.96rem}
+.verse-compare .ver-line.niv{color:#1e40af;font-size:.94rem;font-style:italic}
 .ver-tag{
   display:inline-block;font-size:.6rem;font-weight:700;
   padding:1px 5px;border-radius:99px;margin-right:5px;
-  vertical-align:.1em;letter-spacing:.3px;
+  vertical-align:.15em;letter-spacing:.3px;
 }
 .ver-line.gae .ver-tag{background:var(--gold);color:#fff}
-.ver-line.sae .ver-tag{background:#9333ea;color:#fff}
+.ver-line.saenew .ver-tag{background:#9333ea;color:#fff}
+.ver-line.niv .ver-tag{background:#1e40af;color:#fff}
 
 /* Actions */
 .actions{display:grid;grid-template-columns:1fr 1fr 1fr;gap:8px;margin-top:12px}

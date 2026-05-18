@@ -20,8 +20,13 @@ const CHAPTER_LENGTHS = {};
 })();
 
 // 번역본 라벨
-const VERSION_LABEL = { GAE: '개역개정', SAENEW: '새번역' };
+const VERSION_LABEL = { GAE: '개역개정', SAENEW: '새번역', NIV: 'NIV' };
+const VERSION_TAG   = { GAE: '개역',     SAENEW: '새번역',  NIV: 'NIV' };
+const VERSION_ORDER = ['GAE', 'SAENEW', 'NIV'];
 function bibleDict(v) { return (window.BIBLES && window.BIBLES[v]) || window.BIBLE || {}; }
+function sortVersions(arr) {
+  return [...arr].sort((a,b) => VERSION_ORDER.indexOf(a) - VERSION_ORDER.indexOf(b));
+}
 
 // === 상태 ===
 const defaultState = () => ({
@@ -33,8 +38,16 @@ const defaultState = () => ({
   readDays: {},
   viewDay: null,
   view: 'main',
-  bibleView: 'GAE',     // 'GAE' | 'SAENEW' | 'BOTH'
+  bibleView: ['GAE'],   // 선택된 번역 배열 (1~2개). 가능: 'GAE','SAENEW','NIV'
 });
+
+// 이전 버전 호환: 문자열이면 배열로 변환
+function normalizeBibleView(v) {
+  if (Array.isArray(v)) return v.length ? v.slice(0, 2) : ['GAE'];
+  if (v === 'BOTH') return ['GAE', 'SAENEW'];
+  if (v === 'GAE' || v === 'SAENEW' || v === 'NIV') return [v];
+  return ['GAE'];
+}
 
 let state = loadState();
 let volatile = {
@@ -48,20 +61,20 @@ let pendingInviteCode = null;
 let lastInviteCode = null;
 
 function loadState() {
-  try {
-    const s = JSON.parse(localStorage.getItem(STORAGE_KEY));
-    if (s && typeof s === 'object') return Object.assign(defaultState(), s);
-  } catch (e) {}
-  // v1 마이그레이션
-  try {
-    const old = JSON.parse(localStorage.getItem('bible180_state_v1'));
-    if (old && typeof old === 'object') {
-      const merged = Object.assign(defaultState(), old);
-      if (merged.startDate) merged.mode = 'solo';
-      return merged;
-    }
-  } catch (e) {}
-  return defaultState();
+  let s;
+  try { s = JSON.parse(localStorage.getItem(STORAGE_KEY)); } catch (e) {}
+  if (!s || typeof s !== 'object') {
+    try {
+      const old = JSON.parse(localStorage.getItem('bible180_state_v1'));
+      if (old && typeof old === 'object') {
+        s = Object.assign({}, old);
+        if (s.startDate) s.mode = 'solo';
+      }
+    } catch (e) {}
+  }
+  const merged = Object.assign(defaultState(), s || {});
+  merged.bibleView = normalizeBibleView(merged.bibleView);
+  return merged;
 }
 
 function saveState() {
@@ -105,8 +118,7 @@ function chapterLabel(book, ch) { return (book === '시') ? `${ch}편` : `${ch}�
 // 각 절을 순회하면서 모든 번역본+소제목을 콜백에 전달
 function eachVerseInRange(range, cb) {
   const [book, sc, sv, ec, ev] = range;
-  const gaeDict = bibleDict('GAE');
-  const saeDict = bibleDict('SAENEW');
+  const dicts = { GAE: bibleDict('GAE'), SAENEW: bibleDict('SAENEW'), NIV: bibleDict('NIV') };
   const subs = window.SUBTITLES || {};
   for (let ch = sc; ch <= ec; ch++) {
     let s, e;
@@ -117,11 +129,12 @@ function eachVerseInRange(range, cb) {
     if (!e) e = 200;
     for (let v = s; v <= e; v++) {
       const key = `${book}${ch}:${v}`;
-      const gae = gaeDict[key];
+      const gae = dicts.GAE[key];
       if (!gae) break;
       cb(book, ch, v, {
-        gae: gae.trim(),
-        sae: (saeDict[key] || '').trim(),
+        GAE: gae.trim(),
+        SAENEW: (dicts.SAENEW[key] || '').trim(),
+        NIV: (dicts.NIV[key] || '').trim(),
         sub: subs[key] || null,
       });
     }
@@ -129,7 +142,8 @@ function eachVerseInRange(range, cb) {
 }
 
 function renderRangesHTML(ranges) {
-  const view = state.bibleView || 'GAE';
+  const view = sortVersions(normalizeBibleView(state.bibleView));
+  const isCompare = view.length > 1;
   const parts = [];
   for (const range of ranges) {
     const book = range[0];
@@ -141,27 +155,32 @@ function renderRangesHTML(ranges) {
         if (chBuf.length) parts.push(`<div class="chapter"><h4 class="ch-title">${chHeader}</h4>${chBuf.join('')}</div>`);
         chBuf = []; curCh = ch; chHeader = chapterLabel(b, ch);
       }
-      // 소제목
+      // 소제목 (한국어 번역에만 있음)
       if (d.sub) {
-        if (view === 'BOTH') {
+        const koVers = view.filter(x => x !== 'NIV');
+        if (koVers.length === 1) {
+          const s = d.sub[koVers[0]];
+          if (s) chBuf.push(`<div class="subtitle">${escapeHtml(s)}</div>`);
+        } else if (koVers.length === 2) {
           const a = d.sub.GAE, c = d.sub.SAENEW;
           if (a || c) {
-            chBuf.push(`<div class="subtitle compare">${a?`<span class="sub-line gae">${escapeHtml(a)}</span>`:''}${c?`<span class="sub-line sae">${escapeHtml(c)}</span>`:''}</div>`);
+            const subLines = [];
+            if (a) subLines.push(`<span class="sub-line gae">${escapeHtml(a)}</span>`);
+            if (c) subLines.push(`<span class="sub-line saenew">${escapeHtml(c)}</span>`);
+            chBuf.push(`<div class="subtitle compare">${subLines.join('')}</div>`);
           }
-        } else {
-          const s = view === 'GAE' ? d.sub.GAE : d.sub.SAENEW;
-          if (s) chBuf.push(`<div class="subtitle">${escapeHtml(s)}</div>`);
         }
       }
       // 본문
-      if (view === 'BOTH') {
-        chBuf.push(`<div class="verse-compare">
-          <span class="vnum">${v}</span>
-          <p class="ver-line gae"><span class="ver-tag">개역</span>${escapeHtml(d.gae)}</p>
-          ${d.sae ? `<p class="ver-line sae"><span class="ver-tag">새번역</span>${escapeHtml(d.sae)}</p>` : ''}
-        </div>`);
+      if (isCompare) {
+        const verseLines = view.map(ver => {
+          const text = d[ver];
+          if (!text) return '';
+          return `<p class="ver-line ${ver.toLowerCase()}"><span class="ver-tag">${VERSION_TAG[ver]}</span>${escapeHtml(text)}</p>`;
+        }).filter(Boolean).join('');
+        chBuf.push(`<div class="verse-compare"><span class="vnum">${v}</span>${verseLines}</div>`);
       } else {
-        const text = view === 'GAE' ? d.gae : (d.sae || d.gae);
+        const text = d[view[0]] || d.GAE;
         chBuf.push(`<p class="verse"><span class="vnum">${v}</span>${escapeHtml(text)}</p>`);
       }
     });
@@ -172,7 +191,8 @@ function renderRangesHTML(ranges) {
 }
 
 function rangesToText(ranges) {
-  const view = state.bibleView || 'GAE';
+  const view = sortVersions(normalizeBibleView(state.bibleView));
+  const isCompare = view.length > 1;
   const lines = [];
   for (const range of ranges) {
     const book = range[0];
@@ -184,11 +204,15 @@ function rangesToText(ranges) {
         lines.push(`〈${fullBook} ${chapterLabel(b, ch)}〉`);
         curCh = ch;
       }
-      if (view === 'BOTH') {
-        lines.push(`${v}. [개역] ${d.gae}`);
-        if (d.sae) lines.push(`   [새번역] ${d.sae}`);
+      if (isCompare) {
+        view.forEach((ver, i) => {
+          const text = d[ver];
+          if (!text) return;
+          const prefix = i === 0 ? `${v}. ` : '   ';
+          lines.push(`${prefix}[${VERSION_TAG[ver]}] ${text}`);
+        });
       } else {
-        const text = view === 'GAE' ? d.gae : (d.sae || d.gae);
+        const text = d[view[0]] || d.GAE;
         lines.push(`${v}. ${text}`);
       }
     });
@@ -383,13 +407,14 @@ function render() {
 
 // === 헤더 ===
 function renderBibleToggle() {
-  const v = state.bibleView || 'GAE';
+  const sel = new Set(normalizeBibleView(state.bibleView));
+  const chip = (ver) => `<button class="${sel.has(ver)?'active':''} ver-${ver.toLowerCase()}" data-ver="${ver}">${sel.has(ver)?'✓ ':''}${VERSION_LABEL[ver]}</button>`;
+  const hint = sel.size === 1 ? '하나 더 골라 비교할 수 있어요' : `${sel.size}개 비교 중`;
   return `
-    <div class="bible-toggle" role="tablist">
-      <button class="${v==='GAE'?'active':''}" data-view="GAE">개역개정</button>
-      <button class="${v==='SAENEW'?'active':''}" data-view="SAENEW">새번역</button>
-      <button class="${v==='BOTH'?'active':''}" data-view="BOTH">📖 비교</button>
-    </div>`;
+    <div class="bible-toggle chip" role="tablist">
+      ${chip('GAE')}${chip('SAENEW')}${chip('NIV')}
+    </div>
+    <div class="bible-toggle-hint">${hint}</div>`;
 }
 
 function renderHeader() {
@@ -764,7 +789,17 @@ function bindMain() {
   if ($('moreMembersBtn')) $('moreMembersBtn').onclick = () => { state.view = 'members'; saveState(); render(); };
   document.querySelectorAll('.bible-toggle button').forEach(b => {
     b.onclick = () => {
-      state.bibleView = b.dataset.view;
+      const ver = b.dataset.ver;
+      let cur = normalizeBibleView(state.bibleView);
+      if (cur.includes(ver)) {
+        // 해제 — 단 마지막 1개는 유지
+        if (cur.length === 1) return;
+        cur = cur.filter(x => x !== ver);
+      } else {
+        cur.push(ver);
+        if (cur.length > 2) cur.shift(); // 가장 오래된 항목 제거
+      }
+      state.bibleView = cur;
       saveState();
       render();
     };
