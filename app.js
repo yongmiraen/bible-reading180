@@ -20,9 +20,9 @@ const CHAPTER_LENGTHS = {};
 })();
 
 // 번역본 라벨
-const VERSION_LABEL = { GAE: '개역개정', SAENEW: '새번역', NIV: 'NIV' };
-const VERSION_TAG   = { GAE: '개역',     SAENEW: '새번역',  NIV: 'NIV' };
-const VERSION_ORDER = ['GAE', 'SAENEW', 'NIV'];
+const VERSION_LABEL = { GAE: '개역개정', SAENEW: '새번역', NIV: 'NIV', ESV: 'ESV' };
+const VERSION_TAG   = { GAE: '개역',     SAENEW: '새번역',  NIV: 'NIV', ESV: 'ESV' };
+const VERSION_ORDER = ['GAE', 'SAENEW', 'NIV', 'ESV'];
 function bibleDict(v) { return (window.BIBLES && window.BIBLES[v]) || window.BIBLE || {}; }
 function sortVersions(arr) {
   return [...arr].sort((a,b) => VERSION_ORDER.indexOf(a) - VERSION_ORDER.indexOf(b));
@@ -151,7 +151,7 @@ function chapterLabel(book, ch) { return (book === '시') ? `${ch}편` : `${ch}�
 // 각 절을 순회하면서 모든 번역본+소제목을 콜백에 전달
 function eachVerseInRange(range, cb) {
   const [book, sc, sv, ec, ev] = range;
-  const dicts = { GAE: bibleDict('GAE'), SAENEW: bibleDict('SAENEW'), NIV: bibleDict('NIV') };
+  const dicts = { GAE: bibleDict('GAE'), SAENEW: bibleDict('SAENEW'), NIV: bibleDict('NIV'), ESV: bibleDict('ESV') };
   const subs = window.SUBTITLES || {};
   for (let ch = sc; ch <= ec; ch++) {
     let s, e;
@@ -168,6 +168,7 @@ function eachVerseInRange(range, cb) {
         GAE: gae.trim(),
         SAENEW: (dicts.SAENEW[key] || '').trim(),
         NIV: (dicts.NIV[key] || '').trim(),
+        ESV: (dicts.ESV[key] || '').trim(),
         sub: subs[key] || null,
       });
     }
@@ -474,7 +475,7 @@ function renderBibleToggle() {
   const hint = sel.size === 1 ? '하나 더 골라 비교할 수 있어요' : `${sel.size}개 비교 중`;
   return `
     <div class="bible-toggle chip" role="tablist">
-      ${chip('GAE')}${chip('SAENEW')}${chip('NIV')}
+      ${chip('GAE')}${chip('SAENEW')}${chip('NIV')}${chip('ESV')}
     </div>
     <div class="bible-toggle-hint">${hint}</div>`;
 }
