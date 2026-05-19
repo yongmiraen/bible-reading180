@@ -469,13 +469,87 @@ function render() {
 }
 
 // === 헤더 ===
+// 해당 날의 챕터 목록 (드라마바이블 영상 있는 것만)
+function getDayChapters(entry) {
+  if (!window.DRAMA_BIBLE || !entry.r) return [];
+  const seen = new Set();
+  const chapters = [];
+  for (const range of entry.r) {
+    const [book, sc, , ec] = range;
+    const fullBook = BOOK_NAMES[book] || book;
+    for (let ch = sc; ch <= ec; ch++) {
+      const key = `${book}${ch}`;
+      if (seen.has(key)) continue;
+      seen.add(key);
+      const videoId = window.DRAMA_BIBLE[key];
+      if (videoId) chapters.push({ key, label: `${fullBook} ${chapterLabel(book, ch)}`, videoId });
+    }
+  }
+  return chapters;
+}
+
 function renderListenBtn(entry) {
   if (!entry.r || entry.r.length === 0) return '';
-  const [book, startCh] = entry.r[0];
-  const fullBook = BOOK_NAMES[book] || book;
-  const query = encodeURIComponent(`드라마바이블 ${fullBook} ${startCh}장`);
-  const url = `https://www.youtube.com/results?search_query=${query}`;
-  return `<a class="listen-btn" href="${url}" target="_blank" rel="noopener noreferrer">🎧 드라마바이블로 듣기</a>`;
+  if (!window.DRAMA_BIBLE) return '';
+  const chapters = getDayChapters(entry);
+  if (!chapters.length) return '';
+  return `<button class="listen-btn" onclick="openPlayer()">🎧 드라마바이블로 듣기 (${chapters.length}개 챕터)</button>`;
+}
+
+// 현재 날의 챕터 저장 (팝업에서 사용)
+let _playerChapters = [];
+
+window.openPlayer = function() {
+  const day = getViewDay();
+  const entry = getDay(day);
+  if (!entry) return;
+  _playerChapters = getDayChapters(entry);
+  if (!_playerChapters.length) { toast('해당 본문의 영상을 찾을 수 없어요'); return; }
+  if (_playerChapters.length === 1) {
+    renderPlayerOverlay(_playerChapters[0].videoId, _playerChapters[0].label, 0);
+  } else {
+    renderPlayerOverlay(null, null, -1);  // 챕터 선택 화면
+  }
+};
+
+window.closePlayer = function() {
+  const el = document.getElementById('yt-overlay');
+  if (el) el.remove();
+};
+
+window.playChapter = function(idx) {
+  const ch = _playerChapters[idx];
+  if (!ch) return;
+  renderPlayerOverlay(ch.videoId, ch.label, idx);
+};
+
+function renderPlayerOverlay(videoId, label, activeIdx) {
+  let overlay = document.getElementById('yt-overlay');
+  if (!overlay) {
+    overlay = document.createElement('div');
+    overlay.id = 'yt-overlay';
+    overlay.onclick = (e) => { if (e.target === overlay) window.closePlayer(); };
+    document.body.appendChild(overlay);
+  }
+
+  const chipsHtml = _playerChapters.map((ch, i) =>
+    `<button class="yt-ch-btn ${i===activeIdx?'playing':''}" onclick="playChapter(${i})">${ch.label}</button>`
+  ).join('');
+
+  overlay.innerHTML = `
+    <div class="yt-sheet">
+      <div class="yt-header">
+        <span class="yt-title">${videoId ? label : '드라마바이블'}</span>
+        <button class="yt-close" onclick="closePlayer()">✕</button>
+      </div>
+      ${_playerChapters.length > 1 ? `<div class="yt-chapters">${chipsHtml}</div>` : ''}
+      ${videoId ? `
+        <div class="yt-iframe-wrap">
+          <iframe src="https://www.youtube-nocookie.com/embed/${videoId}?autoplay=1&rel=0"
+            allow="accelerometer; autoplay; clipboard-write; encrypted-media; gyroscope; picture-in-picture"
+            allowfullscreen></iframe>
+        </div>` : `<p style="padding:16px;color:var(--muted);text-align:center">챕터를 선택해주세요</p>`}
+    </div>`;
 }
 
 function renderBibleToggle() {

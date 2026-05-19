@@ -106,12 +106,53 @@ header h1{font-size:1.15rem;margin:0;font-weight:700;letter-spacing:-.5px}
 .passage-ref{font-size:.82rem;color:var(--gold);margin-bottom:6px}
 .listen-btn{
   display:inline-flex;align-items:center;gap:6px;
-  font-size:.82rem;font-weight:600;color:var(--bad);
-  text-decoration:none;padding:5px 10px;
+  font-size:.82rem;font-weight:600;color:#b91c1c;
+  cursor:pointer;padding:5px 12px;
   background:#fff0f0;border:1px solid #fca5a5;border-radius:99px;
   margin-bottom:12px;transition:.15s;
 }
 .listen-btn:hover{background:#fee2e2}
+
+/* 드라마바이블 플레이어 오버레이 */
+#yt-overlay{
+  position:fixed;inset:0;z-index:200;
+  background:rgba(0,0,0,.45);display:flex;align-items:flex-end;
+  animation:fadeIn .2s;
+}
+@keyframes fadeIn{from{opacity:0}to{opacity:1}}
+.yt-sheet{
+  background:#fff;width:100%;max-width:680px;margin:0 auto;
+  border-radius:20px 20px 0 0;padding:0 0 env(safe-area-inset-bottom,0);
+  animation:slideUp .25s;overflow:hidden;
+}
+@keyframes slideUp{from{transform:translateY(100%)}to{transform:translateY(0)}}
+.yt-header{
+  display:flex;align-items:center;justify-content:space-between;
+  padding:14px 16px 10px;
+}
+.yt-title{font-weight:700;font-size:.95rem;color:var(--text)}
+.yt-close{
+  width:30px;height:30px;border-radius:50%;background:#f4f4f4;
+  display:flex;align-items:center;justify-content:center;cursor:pointer;
+  font-size:1rem;border:none;
+}
+.yt-close:hover{background:#e8e8e8}
+.yt-chapters{
+  display:flex;flex-wrap:wrap;gap:6px;padding:0 16px 12px;
+}
+.yt-ch-btn{
+  padding:7px 12px;background:var(--accent-soft);color:var(--accent);
+  border:1.5px solid var(--accent);border-radius:99px;
+  font-size:.82rem;font-weight:600;cursor:pointer;
+}
+.yt-ch-btn.playing{background:var(--accent);color:#fff}
+.yt-ch-btn:hover{background:var(--accent);color:#fff}
+.yt-iframe-wrap{
+  position:relative;width:100%;padding-top:56.25%;background:#000;
+}
+.yt-iframe-wrap iframe{
+  position:absolute;inset:0;width:100%;height:100%;border:none;
+}
 .study-only{padding:16px;background:var(--accent-soft);border-radius:10px;text-align:center}
 .study-only p{margin:6px 0}
 .study-text{font-weight:600;color:var(--accent)}
@@ -354,6 +395,7 @@ header h1{font-size:1.15rem;margin:0;font-weight:700;letter-spacing:-.5px}
   <script src="https://www.gstatic.com/firebasejs/10.13.2/firebase-firestore-compat.js"></script>
   <script src="firebase-config.js"></script>
   <script src="groups.js"></script>
+  <script src="drama-bible.js"></script>
   <script src="schedule-data.js"></script>
   <script src="bible-data.js"></script>
   <script src="app.js"></script>
