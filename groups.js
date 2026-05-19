@@ -15,8 +15,8 @@
   const auth = firebase.auth();
   const db = firebase.firestore();
 
-  // 오프라인 캐시 (best-effort)
-  db.enablePersistence({ synchronizeTabs: true }).catch(() => {});
+  // 오프라인 캐시 (best-effort, iOS Safari 호환을 위해 synchronizeTabs 제거)
+  db.enablePersistence().catch(() => {});
 
   let currentUser = null;
   let groupUnsub = null;
@@ -24,20 +24,23 @@
   let authChangeCallbacks = [];
 
   // 인증 상태: 첫 번째 onAuthStateChanged 이벤트를 기다린 뒤
-  // 저장된 사용자가 없으면 익명 로그인 (race condition 방지)
+  // 저장된 사용자가 없으면 익명 로그인 (iOS Safari ITP 대응 포함)
+  let _lastKnownGoodUser = null; // authReady 시점의 신뢰 가능한 사용자
+
   const authReadyPromise = new Promise((resolve, reject) => {
     let firstFired = false;
     auth.onAuthStateChanged(async (user) => {
-      const prevUid = currentUser ? currentUser.uid : null;
-      currentUser = user;
       if (!firstFired) {
         firstFired = true;
         if (user) {
+          currentUser = user;
+          _lastKnownGoodUser = user;
           resolve(user);
         } else {
           try {
             const cred = await auth.signInAnonymously();
             currentUser = cred.user;
+            _lastKnownGoodUser = cred.user;
             resolve(cred.user);
           } catch (e) {
             console.error('Anonymous sign-in failed:', e);
@@ -45,8 +48,11 @@
           }
         }
       } else {
-        // 후속 상태 변경 (Google 로그인/로그아웃 등)
+        // 후속 상태 변경
+        const prevUid = currentUser ? currentUser.uid : null;
         const newUid = user ? user.uid : null;
+        currentUser = user;
+        if (user) _lastKnownGoodUser = user;
         if (newUid !== prevUid) {
           authChangeCallbacks.forEach(cb => cb(user, prevUid));
         }
@@ -66,7 +72,23 @@
 
   async function ensureSignedIn() {
     await authReadyPromise;
-    if (!currentUser) throw new Error('Sign-in failed');
+    // currentUser가 null이면 iOS ITP 등으로 auth 상태가 날아간 것
+    // _lastKnownGoodUser 또는 재로그인으로 복구
+    if (!currentUser) {
+      if (_lastKnownGoodUser && !_lastKnownGoodUser.isAnonymous) {
+        // Google 로그인 사용자라면 세션 복구 불가 → 안내
+        throw new Error('로그인 세션이 만료되었어요. 설정에서 Google 로그인을 다시 해주세요.');
+      }
+      // 익명 사용자: 재시도
+      try {
+        const cred = await auth.signInAnonymously();
+        currentUser = cred.user;
+        _lastKnownGoodUser = cred.user;
+        return currentUser;
+      } catch (e) {
+        throw new Error('로그인 실패. 인터넷 연결 확인 후 다시 시도해주세요. (Safari 개인정보보호 탭이라면 일반 탭에서 열어주세요)');
+      }
+    }
     return currentUser;
   }
 
