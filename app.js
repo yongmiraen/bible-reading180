@@ -193,7 +193,7 @@ function renderRangesHTML(ranges) {
       }
       // 소제목 (한국어 번역에만 있음) — 연속 중복 제거
       if (d.sub) {
-        const koVers = view.filter(x => x !== 'NIV');
+        const koVers = view.filter(x => x === 'GAE' || x === 'SAENEW');
         let subKey = null, subHtml = null;
         if (koVers.length === 1) {
           const s = d.sub[koVers[0]];
