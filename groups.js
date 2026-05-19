@@ -160,6 +160,21 @@
     await db.collection('groups').doc(code).update(patch);
   }
 
+  // 혼자 모드 클라우드 동기화
+  function watchSoloData(uid, cb) {
+    return db.collection('users').doc(uid).onSnapshot(
+      snap => cb(snap.exists ? snap.data() : null),
+      err => console.error('solo sync error:', err)
+    );
+  }
+
+  async function saveSoloData(uid, data) {
+    await db.collection('users').doc(uid).set(
+      { ...data, updatedAt: firebase.firestore.FieldValue.serverTimestamp() },
+      { merge: true }
+    );
+  }
+
   function getUserId() {
     return currentUser ? currentUser.uid : null;
   }
@@ -223,5 +238,7 @@
     updateGroupMeta,
     linkOrSignInGoogle,
     signOutToAnonymous,
+    watchSoloData,
+    saveSoloData,
   };
 })();

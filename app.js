@@ -59,6 +59,39 @@ let volatile = {
 };
 let pendingInviteCode = null;
 let lastInviteCode = null;
+let soloUnsub = null;
+
+// Google 로그인 여부
+function isGoogleLinked() {
+  const info = Groups.getUserInfo ? Groups.getUserInfo() : null;
+  return !!(info && !info.isAnonymous && info.googleEmail);
+}
+
+// 혼자 모드 Firestore 구독
+function subscribeSolo() {
+  if (soloUnsub) { soloUnsub(); soloUnsub = null; }
+  if (!volatile.userId || !isGoogleLinked()) return;
+  soloUnsub = Groups.watchSoloData(volatile.userId, (data) => {
+    if (!data) return; // 서버에 아직 데이터 없음 (첫 사용)
+    let changed = false;
+    if (data.startDate && data.startDate !== state.startDate) {
+      state.startDate = data.startDate; changed = true;
+    }
+    if (data.groupName !== undefined && data.groupName !== state.groupName) {
+      state.groupName = data.groupName; changed = true;
+    }
+    if (data.readDays && JSON.stringify(data.readDays) !== JSON.stringify(state.readDays)) {
+      state.readDays = data.readDays; changed = true;
+    }
+    if (changed) { saveState(); render(); }
+  });
+}
+
+// 혼자 모드 Firestore에 현재 상태 저장
+function pushSoloData(patch) {
+  if (state.mode !== 'solo' || !isGoogleLinked() || !volatile.userId) return;
+  Groups.saveSoloData(volatile.userId, patch).catch(e => console.error('solo save:', e));
+}
 
 function loadState() {
   let s;
@@ -286,6 +319,8 @@ function toggleRead(day) {
     Groups.setReadDays(state.groupId, state.readDays)
       .then(() => { volatile.syncStatus = 'idle'; render(); })
       .catch(e => { volatile.syncStatus = 'error'; console.error('sync', e); render(); });
+  } else if (state.mode === 'solo') {
+    pushSoloData({ readDays: state.readDays });
   }
 }
 
@@ -351,6 +386,8 @@ async function init() {
 
   if (state.mode === 'group' && state.groupId) {
     subscribeToGroup();
+  } else if (state.mode === 'solo' && isGoogleLinked()) {
+    subscribeSolo(); // Google 연동 시 혼자 모드도 동기화
   }
   render();
 }
@@ -524,7 +561,10 @@ function bindSoloSetup() {
     state.groupName = document.getElementById('groupName').value.trim();
     state.view = 'main';
     state.viewDay = null;
-    saveState(); render();
+    saveState();
+    subscribeSolo(); // Google 연동 상태면 구독 시작
+    pushSoloData({ startDate: state.startDate, groupName: state.groupName, readDays: state.readDays });
+    render();
   };
 }
 
@@ -1155,7 +1195,9 @@ function bindSettings() {
     state.startDate = d;
     state.groupName = $('groupName').value.trim();
     state.view = 'main'; state.viewDay = null;
-    saveState(); toast('저장되었어요'); render();
+    saveState();
+    pushSoloData({ startDate: state.startDate, groupName: state.groupName });
+    toast('저장되었어요'); render();
   };
   if ($('saveNameBtn')) $('saveNameBtn').onclick = async () => {
     const dn = $('displayName').value.trim();
@@ -1203,6 +1245,10 @@ function bindSettings() {
       const res = await Groups.linkOrSignInGoogle();
       if (res.action === 'linked') {
         toast('Google 계정에 연결되었어요. 다른 기기에서도 같은 계정으로 동기화돼요.');
+        if (state.mode === 'solo') {
+          subscribeSolo();
+          pushSoloData({ startDate: state.startDate, groupName: state.groupName, readDays: state.readDays });
+        }
         render();
       } else {
         // sign-in (다른 기기의 기존 계정으로 로그인됨) → UID가 바뀌었으므로 새로고침
