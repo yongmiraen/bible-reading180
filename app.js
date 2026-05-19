@@ -469,6 +469,15 @@ function render() {
 }
 
 // === 헤더 ===
+function renderListenBtn(entry) {
+  if (!entry.r || entry.r.length === 0) return '';
+  const [book, startCh] = entry.r[0];
+  const fullBook = BOOK_NAMES[book] || book;
+  const query = encodeURIComponent(`드라마바이블 ${fullBook} ${startCh}장`);
+  const url = `https://www.youtube.com/results?search_query=${query}`;
+  return `<a class="listen-btn" href="${url}" target="_blank" rel="noopener noreferrer">🎧 드라마바이블로 듣기</a>`;
+}
+
 function renderBibleToggle() {
   const sel = new Set(normalizeBibleView(state.bibleView));
   const chip = (ver) => `<button class="${sel.has(ver)?'active':''} ver-${ver.toLowerCase()}" data-ver="${ver}">${sel.has(ver)?'✓ ':''}${VERSION_LABEL[ver]}</button>`;
@@ -791,6 +800,7 @@ function renderMain() {
       ${isRead ? '<div class="read-banner">✓ 오늘 본문 읽기 완료</div>' : ''}
       <h2 class="passage-label">${escapeHtml(entry.l)}</h2>
       ${entry.p ? `<div class="passage-ref">📚 교재 ${entry.p}</div>` : ''}
+      ${renderListenBtn(entry)}
       ${entry.r.length === 0 ?
         `<div class="study-only">
           <p>📖 오늘은 성경 본문 대신 외부 교재를 읽어요.</p>
