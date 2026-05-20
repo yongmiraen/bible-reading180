@@ -488,9 +488,47 @@ function getDayChapters(entry) {
   return chapters;
 }
 
+// 사복음서 교재일(132-146): 책별로 챕터 묶기
+const GOSPEL_BOOK_NAMES = { 마: '마태복음', 막: '마가복음', 눅: '누가복음', 요: '요한복음' };
+const GOSPEL_BOOK_ORDER = ['마', '막', '눅', '요'];
+
+function isGospelHarmonyDay(entry) {
+  return entry.d >= 132 && entry.d <= 146;
+}
+
+function getGospelDayBooks(entry) {
+  if (!window.DRAMA_BIBLE || !entry.r) return null;
+  const books = {};
+  const seen = new Set();
+  for (const range of entry.r) {
+    const [book, sc, , ec] = range;
+    if (!GOSPEL_BOOK_ORDER.includes(book)) continue;
+    if (!books[book]) books[book] = [];
+    const fullBook = BOOK_NAMES[book] || book;
+    for (let ch = sc; ch <= ec; ch++) {
+      const key = `${book}${ch}`;
+      if (seen.has(key)) continue;
+      seen.add(key);
+      const videoId = window.DRAMA_BIBLE[key];
+      if (videoId) books[book].push({ key, label: `${fullBook} ${chapterLabel(book, ch)}`, videoId });
+    }
+  }
+  const hasAny = Object.values(books).some(chs => chs.length > 0);
+  return hasAny ? books : null;
+}
+
 function renderListenBtn(entry) {
   if (!entry.r || entry.r.length === 0) return '';
   if (!window.DRAMA_BIBLE) return '';
+
+  if (isGospelHarmonyDay(entry)) {
+    const books = getGospelDayBooks(entry);
+    if (!books) return '';
+    const bookLabel = GOSPEL_BOOK_ORDER.filter(b => books[b] && books[b].length)
+      .map(b => GOSPEL_BOOK_NAMES[b]).join(' · ');
+    return `<button class="listen-btn" onclick="openGospelPlayer()">🎧 드라마바이블 (${bookLabel})</button>`;
+  }
+
   const chapters = getDayChapters(entry);
   if (!chapters.length) return '';
   return `<button class="listen-btn" onclick="openPlayer()">🎧 드라마바이블로 듣기 (${chapters.length}개 챕터)</button>`;
@@ -498,17 +536,67 @@ function renderListenBtn(entry) {
 
 // 현재 날의 챕터 저장 (팝업에서 사용)
 let _playerChapters = [];
+let _gospelBooks = {};     // 사복음서 모드: {마:[...], 막:[...], 눅:[...], 요:[...]}
+let _gospelMode = false;
 
 window.openPlayer = function() {
   const day = getViewDay();
   const entry = getDay(day);
   if (!entry) return;
+  _gospelMode = false;
   _playerChapters = getDayChapters(entry);
   if (!_playerChapters.length) { toast('해당 본문의 영상을 찾을 수 없어요'); return; }
   if (_playerChapters.length === 1) {
     renderPlayerOverlay(_playerChapters[0].videoId, _playerChapters[0].label, 0);
   } else {
     renderPlayerOverlay(null, null, -1);  // 챕터 선택 화면
+  }
+};
+
+window.openGospelPlayer = function() {
+  const day = getViewDay();
+  const entry = getDay(day);
+  if (!entry) return;
+  _gospelMode = true;
+  _gospelBooks = getGospelDayBooks(entry) || {};
+  if (!Object.keys(_gospelBooks).length) { toast('해당 본문의 영상을 찾을 수 없어요'); return; }
+  window.renderGospelBookOverlay();
+};
+
+window.renderGospelBookOverlay = function renderGospelBookOverlay() {
+  let overlay = document.getElementById('yt-overlay');
+  if (!overlay) {
+    overlay = document.createElement('div');
+    overlay.id = 'yt-overlay';
+    overlay.onclick = (e) => { if (e.target === overlay) window.closePlayer(); };
+    document.body.appendChild(overlay);
+  }
+  const booksHtml = GOSPEL_BOOK_ORDER
+    .filter(b => _gospelBooks[b] && _gospelBooks[b].length)
+    .map(b => {
+      const chs = _gospelBooks[b];
+      return `<button class="yt-book-btn" onclick="selectGospelBook('${b}')">
+        <span class="yt-book-name">${GOSPEL_BOOK_NAMES[b]}</span>
+        <span class="yt-book-count">${chs.length}개 챕터</span>
+      </button>`;
+    }).join('');
+  overlay.innerHTML = `
+    <div class="yt-sheet">
+      <div class="yt-header">
+        <span class="yt-title">드라마바이블</span>
+        <button class="yt-close" onclick="closePlayer()">✕</button>
+      </div>
+      <div class="yt-book-list">${booksHtml}</div>
+    </div>`;
+}
+
+window.selectGospelBook = function(bookKey) {
+  _playerChapters = _gospelBooks[bookKey] || [];
+  if (!_playerChapters.length) return;
+  if (_playerChapters.length === 1) {
+    renderPlayerOverlay(_playerChapters[0].videoId, _playerChapters[0].label, 0, true);
+  } else {
+    renderPlayerOverlay(null, null, -1, true);
   }
 };
 
@@ -520,10 +608,10 @@ window.closePlayer = function() {
 window.playChapter = function(idx) {
   const ch = _playerChapters[idx];
   if (!ch) return;
-  renderPlayerOverlay(ch.videoId, ch.label, idx);
+  renderPlayerOverlay(ch.videoId, ch.label, idx, _gospelMode);
 };
 
-function renderPlayerOverlay(videoId, label, activeIdx) {
+function renderPlayerOverlay(videoId, label, activeIdx, showBack) {
   let overlay = document.getElementById('yt-overlay');
   if (!overlay) {
     overlay = document.createElement('div');
@@ -536,9 +624,14 @@ function renderPlayerOverlay(videoId, label, activeIdx) {
     `<button class="yt-ch-btn ${i===activeIdx?'playing':''}" onclick="playChapter(${i})">${ch.label}</button>`
   ).join('');
 
+  const backBtn = showBack
+    ? `<button class="yt-back" onclick="renderGospelBookOverlay()">◀ 복음서 선택</button>`
+    : '';
+
   overlay.innerHTML = `
     <div class="yt-sheet">
       <div class="yt-header">
+        ${backBtn}
         <span class="yt-title">${videoId ? label : '드라마바이블'}</span>
         <button class="yt-close" onclick="closePlayer()">✕</button>
       </div>

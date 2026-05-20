@@ -147,6 +147,24 @@ header h1{font-size:1.15rem;margin:0;font-weight:700;letter-spacing:-.5px}
 }
 .yt-ch-btn.playing{background:var(--accent);color:#fff}
 .yt-ch-btn:hover{background:var(--accent);color:#fff}
+/* 사복음서 교재: 복음서 선택 버튼 */
+.yt-book-list{display:flex;flex-direction:column;gap:8px;padding:8px 16px 20px}
+.yt-book-btn{
+  display:flex;align-items:center;justify-content:space-between;
+  padding:14px 18px;background:var(--accent-soft);border:1.5px solid var(--accent);
+  border-radius:14px;cursor:pointer;text-align:left;
+}
+.yt-book-btn:hover{background:var(--accent);color:#fff}
+.yt-book-btn:hover .yt-book-count{color:#fff}
+.yt-book-name{font-weight:700;font-size:.95rem;color:var(--accent)}
+.yt-book-btn:hover .yt-book-name{color:#fff}
+.yt-book-count{font-size:.8rem;color:var(--muted)}
+.yt-back{
+  padding:4px 10px;border:1.5px solid var(--accent);border-radius:99px;
+  color:var(--accent);font-size:.8rem;font-weight:600;cursor:pointer;
+  background:transparent;white-space:nowrap;
+}
+.yt-back:hover{background:var(--accent);color:#fff}
 .yt-iframe-wrap{
   position:relative;width:100%;padding-top:56.25%;background:#000;
 }
