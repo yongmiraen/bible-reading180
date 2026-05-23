@@ -14,6 +14,7 @@
   firebase.initializeApp(window.FIREBASE_CONFIG);
   const auth = firebase.auth();
   const db = firebase.firestore();
+  const analytics = firebase.analytics();
 
   // 오프라인 캐시 (best-effort, iOS Safari 호환을 위해 synchronizeTabs 제거)
   db.enablePersistence().catch(() => {});

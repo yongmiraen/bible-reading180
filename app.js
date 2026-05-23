@@ -1,6 +1,15 @@
 // 성경 통독 앱 (180일) — Firebase 그룹 동기화 포함
 // 데이터: window.BIBLE, window.SCHEDULE, window.BOOK_NAMES, window.Groups
 
+// Firebase Analytics 이벤트 기록 (Groups 초기화 후 사용 가능)
+function logEvent(name, params) {
+  try {
+    if (window.firebase && firebase.app().options) {
+      firebase.analytics().logEvent(name, params || {});
+    }
+  } catch(e) {}
+}
+
 const TOTAL_DAYS = 180;
 const STORAGE_KEY = 'bible180_state_v2';
 const SITE_URL = location.origin + location.pathname;
@@ -315,6 +324,7 @@ function toggleRead(day) {
   else state.readDays[day] = true;
   saveState();
   toast(wasRead ? `Day ${day} 읽음 표시를 취소했어요` : `Day ${day} 읽음 완료 ✓`);
+  if (!wasRead) logEvent('mark_read', { day, mode: state.mode });
   if (state.mode === 'group' && state.groupId) {
     volatile.syncStatus = 'syncing';
     Groups.setReadDays(state.groupId, state.readDays)
@@ -544,6 +554,7 @@ window.openPlayer = function() {
   const entry = getDay(day);
   if (!entry) return;
   _gospelMode = false;
+  logEvent('open_drama_bible', { day });
   _playerChapters = getDayChapters(entry);
   if (!_playerChapters.length) { toast('해당 본문의 영상을 찾을 수 없어요'); return; }
   if (_playerChapters.length === 1) {
@@ -558,6 +569,7 @@ window.openGospelPlayer = function() {
   const entry = getDay(day);
   if (!entry) return;
   _gospelMode = true;
+  logEvent('open_drama_bible', { day });
   _gospelBooks = getGospelDayBooks(entry) || {};
   if (!Object.keys(_gospelBooks).length) { toast('해당 본문의 영상을 찾을 수 없어요'); return; }
   window.renderGospelBookOverlay();
@@ -819,6 +831,7 @@ function bindCreateForm() {
     btn.disabled = true; btn.textContent = '만드는 중...';
     try {
       const code = await Groups.createGroup({ name, startDate, displayName });
+      logEvent('create_group');
       state.groupId = code;
       state.displayName = displayName;
       state.readDays = {};
@@ -866,6 +879,7 @@ function bindJoinForm(fromLink) {
     btn.disabled = true; btn.textContent = '참가 중...';
     try {
       await Groups.joinGroup({ code, displayName, existingReadDays: state.readDays });
+      logEvent('join_group');
       state.mode = 'group';
       state.groupId = code;
       state.displayName = displayName;
