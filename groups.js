@@ -176,10 +176,10 @@
 
   async function setReadDays(code, readDays) {
     const user = await ensureSignedIn();
-    await db.collection('groups').doc(code).collection('members').doc(user.uid).set({
+    await db.collection('groups').doc(code).collection('members').doc(user.uid).update({
       readDays,
       updatedAt: firebase.firestore.FieldValue.serverTimestamp()
-    }, { merge: true });
+    });
   }
 
   async function updateGroupMeta(code, patch) {
@@ -196,10 +196,13 @@
   }
 
   async function saveSoloData(uid, data) {
-    await db.collection('users').doc(uid).set(
-      { ...data, updatedAt: firebase.firestore.FieldValue.serverTimestamp() },
-      { merge: true }
-    );
+    const ref = db.collection('users').doc(uid);
+    const snap = await ref.get();
+    if (snap.exists) {
+      await ref.update({ ...data, updatedAt: firebase.firestore.FieldValue.serverTimestamp() });
+    } else {
+      await ref.set({ ...data, updatedAt: firebase.firestore.FieldValue.serverTimestamp() });
+    }
   }
 
   function getUserId() {
