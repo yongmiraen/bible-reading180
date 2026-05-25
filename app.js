@@ -551,7 +551,7 @@ const GOSPEL_BOOK_NAMES = { 마: '마태복음', 막: '마가복음', 눅: '누�
 const GOSPEL_BOOK_ORDER = ['마', '막', '눅', '요'];
 
 function isGospelHarmonyDay(entry) {
-  return entry.d >= 132 && entry.d <= 146;
+  return entry.l && entry.l.startsWith('사복음서');
 }
 
 function getGospelDayBooks(entry) {
