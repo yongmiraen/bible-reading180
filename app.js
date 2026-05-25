@@ -354,9 +354,10 @@ function relativeTime(ts) {
   return `${Math.floor(days/30)}달 전`;
 }
 
-function countReadDays(readDays) {
+function countReadDays(readDays, total) {
   if (!readDays) return 0;
-  return Object.keys(readDays).filter(k => readDays[k]).length;
+  const max = total || TOTAL_DAYS;
+  return Object.keys(readDays).filter(k => readDays[k] && +k >= 1 && +k <= max).length;
 }
 
 // === 진도 토글 (자동 동기화) ===
@@ -1112,11 +1113,11 @@ function memberTotalDays(m) {
 
 function renderMembersPreview() {
   if (!volatile.members.length) return '';
-  const top = [...volatile.members].sort((a,b) => countReadDays(b.readDays) - countReadDays(a.readDays)).slice(0, 4);
+  const top = [...volatile.members].sort((a,b) => countReadDays(b.readDays, memberTotalDays(b)) - countReadDays(a.readDays, memberTotalDays(a))).slice(0, 4);
   const rows = top.map(m => {
     const isMe = m.uid === volatile.userId;
-    const days = countReadDays(m.readDays);
     const mTotal = memberTotalDays(m);
+    const days = countReadDays(m.readDays, mTotal);
     const pct = Math.round(days/mTotal*100);
     return `<div class="member-row ${isMe?'me':''}">
       <span class="member-name">${escapeHtml(m.displayName || '익명')}${isMe?'<span class="you-tag">나</span>':''}</span>
@@ -1290,11 +1291,11 @@ function scrollToToday() {
 
 // === 조원 보기 ===
 function renderMembers() {
-  const sorted = [...volatile.members].sort((a,b) => countReadDays(b.readDays) - countReadDays(a.readDays));
+  const sorted = [...volatile.members].sort((a,b) => countReadDays(b.readDays, memberTotalDays(b)) - countReadDays(a.readDays, memberTotalDays(a)));
   const rows = sorted.map(m => {
     const isMe = m.uid === volatile.userId;
-    const days = countReadDays(m.readDays);
     const mTotal = memberTotalDays(m);
+    const days = countReadDays(m.readDays, mTotal);
     const pct = Math.round(days/mTotal*100);
     const last = relativeTime(m.updatedAt);
     const planTag = mTotal === 365 ? '<span class="plan-tag t365">365</span>' : '<span class="plan-tag t180">180</span>';
