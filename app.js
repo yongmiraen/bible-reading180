@@ -1100,6 +1100,7 @@ function renderMain() {
       <button class="share" id="shareBtn">📤 공유</button>
       <button class="copy" id="copyBtn">📋 본문 복사</button>
     </div>
+    ${day > 1 ? `<button class="bulk-read-btn" id="bulkReadBtn">Day 1~${day} 까지 모두 읽음 표시</button>` : ''}
     ${renderDayNav(day, realToday, isToday)}
     ${volatile.syncStatus === 'error' ? '<div class="sync-status sync-error">⚠ 동기화 오류 — 인터넷 연결을 확인해주세요</div>' : ''}
   `;
@@ -1155,6 +1156,19 @@ function bindMain() {
   document.querySelectorAll('.next-day-btn').forEach(b => b.onclick = () => goDay(getViewDay() + 1));
   document.querySelectorAll('.goto-today-btn').forEach(b => b.onclick = () => { state.viewDay = null; saveState(); render(); });
   if ($('checkBtn')) $('checkBtn').onclick = () => toggleRead(getViewDay());
+  if ($('bulkReadBtn')) $('bulkReadBtn').onclick = () => {
+    const day = getViewDay();
+    if (!confirm(`Day 1부터 ${day}까지 모두 읽음으로 표시할까요?`)) return;
+    for (let i = 1; i <= day; i++) state.readDays[i] = true;
+    saveState();
+    if (state.mode === 'group' && state.groupId) {
+      Groups.setReadDays(state.groupId, state.readDays).catch(e => console.error('sync', e));
+    } else if (state.mode === 'solo') {
+      pushSoloData({ readDays: state.readDays });
+    }
+    toast(`Day 1~${day} 읽음 표시 완료`);
+    render();
+  };
   if ($('shareBtn')) $('shareBtn').onclick = shareDay;
   if ($('copyBtn')) $('copyBtn').onclick = copyDay;
   if ($('listBtn')) $('listBtn').onclick = () => { state.view = 'list'; saveState(); render(); };
