@@ -10,9 +10,11 @@ function logEvent(name, params) {
   } catch(e) {}
 }
 
-const TOTAL_DAYS = 180;
+let TOTAL_DAYS = 180;
+let SCHEDULE = window.SCHEDULE;
 const STORAGE_KEY = 'bible180_state_v2';
 const SITE_URL = location.origin + location.pathname;
+function inviteLink(code) { return `${SITE_URL}?join=${code}`; }
 const FEEDBACK_ENDPOINT = 'https://formspree.io/f/mdajorvp';
 
 // === 장별 마지막 절 캐시 ===
@@ -39,6 +41,7 @@ function sortVersions(arr) {
 
 // === 상태 ===
 const defaultState = () => ({
+  plan: null,           // '180' | '365' | null
   mode: null,           // 'solo' | 'group' | null
   startDate: null,      // solo mode
   groupName: '',        // solo mode (라벨용)
@@ -58,7 +61,45 @@ function normalizeBibleView(v) {
   return ['GAE'];
 }
 
+function applyPlan(plan) {
+  if (plan === '365') {
+    SCHEDULE = window.SCHEDULE_365;
+    TOTAL_DAYS = 365;
+  } else {
+    SCHEDULE = window.SCHEDULE;
+    TOTAL_DAYS = 180;
+  }
+}
+
+function convertReadDays(readDays, fromPlan, toPlan) {
+  const s365 = window.SCHEDULE_365;
+  const converted = {};
+
+  if (fromPlan === '180' && toPlan === '365') {
+    for (const dayStr in readDays) {
+      if (!readDays[dayStr]) continue;
+      const day180 = +dayStr;
+      const matching = s365.filter(d => d.src === day180);
+      matching.forEach(d => { converted[d.d] = true; });
+    }
+  } else if (fromPlan === '365' && toPlan === '180') {
+    const srcGroups = {};
+    s365.forEach(d => {
+      if (!srcGroups[d.src]) srcGroups[d.src] = [];
+      srcGroups[d.src].push(d.d);
+    });
+    for (const src in srcGroups) {
+      const days365 = srcGroups[src];
+      const allRead = days365.every(d => readDays[d]);
+      if (allRead) converted[+src] = true;
+    }
+  }
+
+  return converted;
+}
+
 let state = loadState();
+applyPlan(state.plan);
 let volatile = {
   groupData: null,      // {name, startDate, owner, createdAt}
   members: [],          // [{uid, displayName, readDays, ...}]
@@ -116,6 +157,7 @@ function loadState() {
   }
   const merged = Object.assign(defaultState(), s || {});
   merged.bibleView = normalizeBibleView(merged.bibleView);
+  if (!merged.plan && merged.mode) merged.plan = '180';
   return merged;
 }
 
@@ -414,6 +456,12 @@ function render() {
     return;
   }
 
+  if (!state.plan) {
+    app.innerHTML = renderPlanSelect();
+    bindPlanSelect();
+    return;
+  }
+
   if (state.view === 'join-from-link' && pendingInviteCode) {
     app.innerHTML = renderJoinForm(pendingInviteCode, true);
     bindJoinForm(true);
@@ -685,11 +733,49 @@ function renderHeader() {
 }
 
 // === 모드 선택 ===
-function renderModeSelect() {
+function renderPlanSelect() {
   return `
     <div class="setup">
       <h1>📖 성경 통독</h1>
-      <p class="lead">180일 동안 함께 통독해요</p>
+      <p class="lead">통독 기간을 선택해주세요</p>
+      <div class="mode-choice">
+        <button class="mode-card" id="plan180">
+          <span class="mode-icon">${emoji3d('Fire','md','180일')}</span>
+          <span class="mode-text">
+            <div class="mode-title">180일 통독</div>
+            <div class="mode-desc">약 6개월 · 하루 평균 6장</div>
+          </span>
+        </button>
+        <button class="mode-card" id="plan365">
+          <span class="mode-icon">${emoji3d('Calendar','md','365일')}</span>
+          <span class="mode-text">
+            <div class="mode-title">365일 통독</div>
+            <div class="mode-desc">1년 · 하루 평균 3장</div>
+          </span>
+        </button>
+      </div>
+    </div>`;
+}
+
+function bindPlanSelect() {
+  document.getElementById('plan180').onclick = () => {
+    state.plan = '180';
+    applyPlan('180');
+    saveState(); render();
+  };
+  document.getElementById('plan365').onclick = () => {
+    state.plan = '365';
+    applyPlan('365');
+    saveState(); render();
+  };
+}
+
+function renderModeSelect() {
+  return `
+    <div class="setup">
+      <button class="back-btn" id="backToPlan">← 기간 선택으로</button>
+      <h1>📖 성경 통독</h1>
+      <p class="lead">${TOTAL_DAYS}일 동안 함께 통독해요</p>
       <div class="mode-choice">
         <button class="mode-card" id="modeSolo">
           <span class="mode-icon">${emoji3d('Slightly smiling face','md','혼자')}</span>
@@ -710,6 +796,12 @@ function renderModeSelect() {
 }
 
 function bindModeSelect() {
+  const backBtn = document.getElementById('backToPlan');
+  if (backBtn) backBtn.onclick = () => {
+    state.plan = null;
+    applyPlan(null);
+    saveState(); render();
+  };
   document.getElementById('modeSolo').onclick = () => {
     state.mode = 'solo';
     state.view = 'main';
@@ -830,7 +922,7 @@ function bindCreateForm() {
     const btn = document.getElementById('createBtn');
     btn.disabled = true; btn.textContent = '만드는 중...';
     try {
-      const code = await Groups.createGroup({ name, startDate, displayName });
+      const code = await Groups.createGroup({ name, startDate, displayName, plan: state.plan });
       logEvent('create_group');
       state.groupId = code;
       state.displayName = displayName;
@@ -878,7 +970,7 @@ function bindJoinForm(fromLink) {
     const btn = document.getElementById('joinBtn');
     btn.disabled = true; btn.textContent = '참가 중...';
     try {
-      await Groups.joinGroup({ code, displayName, existingReadDays: state.readDays });
+      await Groups.joinGroup({ code, displayName, existingReadDays: state.readDays, plan: state.plan });
       logEvent('join_group');
       state.mode = 'group';
       state.groupId = code;
@@ -899,7 +991,7 @@ function bindJoinForm(fromLink) {
 // === 초대 공유 ===
 function renderInviteShare() {
   const code = state.groupId || lastInviteCode;
-  const link = `${SITE_URL}?join=${code}`;
+  const link = inviteLink(code);
   return `
     ${renderHeader()}
     <div class="card" style="text-align:center">
@@ -922,8 +1014,8 @@ function renderInviteShare() {
 
 function bindInviteShare() {
   const code = state.groupId || lastInviteCode;
-  const link = `${SITE_URL}?join=${code}`;
-  const msg = `📖 성경 통독 180일 — 함께해요!\n\n조: ${effectiveTitle()}\n초대 코드: ${code}\n\n링크 클릭으로 바로 참가:\n${link}`;
+  const link = inviteLink(code);
+  const msg = `📖 성경 통독 ${TOTAL_DAYS}일 — 함께해요!\n\n조: ${effectiveTitle()}\n초대 코드: ${code}\n\n링크 클릭으로 바로 참가:\n${link}`;
   document.getElementById('shareLinkBtn').onclick = async () => {
     if (navigator.share) {
       try { await navigator.share({ title: '성경 통독 초대', text: msg }); }
@@ -1014,16 +1106,21 @@ function renderDayNav(day, realToday, isToday) {
     </nav>`;
 }
 
+function memberTotalDays(m) {
+  return m.plan === '365' ? 365 : 180;
+}
+
 function renderMembersPreview() {
   if (!volatile.members.length) return '';
   const top = [...volatile.members].sort((a,b) => countReadDays(b.readDays) - countReadDays(a.readDays)).slice(0, 4);
   const rows = top.map(m => {
     const isMe = m.uid === volatile.userId;
     const days = countReadDays(m.readDays);
-    const pct = Math.round(days/TOTAL_DAYS*100);
+    const mTotal = memberTotalDays(m);
+    const pct = Math.round(days/mTotal*100);
     return `<div class="member-row ${isMe?'me':''}">
       <span class="member-name">${escapeHtml(m.displayName || '익명')}${isMe?'<span class="you-tag">나</span>':''}</span>
-      <span class="member-progress"><b>${days}</b>일 (${pct}%)</span>
+      <span class="member-progress"><b>${days}</b>/${mTotal}일 (${pct}%)</span>
     </div>`;
   }).join('');
   const more = volatile.members.length > 4 ? `<span class="more" id="moreMembersBtn">전체 보기 →</span>` : `<span class="more" id="moreMembersBtn">자세히 →</span>`;
@@ -1197,11 +1294,13 @@ function renderMembers() {
   const rows = sorted.map(m => {
     const isMe = m.uid === volatile.userId;
     const days = countReadDays(m.readDays);
-    const pct = Math.round(days/TOTAL_DAYS*100);
+    const mTotal = memberTotalDays(m);
+    const pct = Math.round(days/mTotal*100);
     const last = relativeTime(m.updatedAt);
+    const planTag = mTotal === 365 ? '<span class="plan-tag t365">365</span>' : '<span class="plan-tag t180">180</span>';
     return `<div class="member-row ${isMe?'me':''}">
-      <span class="member-name">${escapeHtml(m.displayName || '익명')}${isMe?'<span class="you-tag">나</span>':''}</span>
-      <span class="member-progress"><b>${days}</b>일 (${pct}%)</span>
+      <span class="member-name">${escapeHtml(m.displayName || '익명')}${isMe?'<span class="you-tag">나</span>':''}${planTag}</span>
+      <span class="member-progress"><b>${days}</b>/${mTotal}일 (${pct}%)</span>
       <span class="member-last-full">마지막 활동 <b>${last}</b></span>
       <div class="member-bar"><div class="member-bar-fill" style="width:${pct}%"></div></div>
     </div>`;
@@ -1264,6 +1363,7 @@ function bindFeedback() {
     const day = calcCurrentDay();
     const context = [
       `모드: ${state.mode || '미설정'}`,
+      `플랜: ${state.plan || '미설정'}일`,
       state.mode === 'group' ? `조: ${effectiveTitle()}` : `시작일: ${state.startDate || '-'}`,
       `Day: ${day != null ? day : '-'} / ${TOTAL_DAYS}`,
       `읽은 일수: ${Object.keys(state.readDays).filter(k=>state.readDays[k]).length}`,
@@ -1299,13 +1399,17 @@ function bindFeedback() {
 // === 설정 ===
 function renderSettings() {
   const isGroup = state.mode === 'group' && state.groupId;
-  const inviteLink = isGroup ? `${SITE_URL}?join=${state.groupId}` : '';
+  const settingsInviteLink = isGroup ? inviteLink(state.groupId) : '';
 
   return `
     ${renderHeader()}
     <button class="back-btn" id="backBtn">← 돌아가기</button>
     <div class="card settings-card">
       <h2>설정</h2>
+      <div class="form-row" style="color:var(--text);display:flex;align-items:center;justify-content:space-between">
+        <b>📅 통독 기간: ${TOTAL_DAYS}일</b>
+        <button class="plan-change-btn" id="changePlanBtn">${TOTAL_DAYS === 180 ? '365일로 변경' : '180일로 변경'}</button>
+      </div>
 
       ${isGroup ? `
         <div class="form-row" style="color:var(--text)">
@@ -1319,7 +1423,7 @@ function renderSettings() {
         <div class="invite-box" style="margin-top:16px">
           <div style="font-size:.8rem;color:var(--muted)">초대 코드</div>
           <div class="invite-code">${state.groupId}</div>
-          <div class="invite-link">${inviteLink}</div>
+          <div class="invite-link">${settingsInviteLink}</div>
         </div>
         <div class="invite-actions">
           <button id="shareLinkBtn">📤 공유</button>
@@ -1381,6 +1485,25 @@ function bindSettings() {
   if ($('listBtn')) $('listBtn').onclick = () => { state.view = 'list'; saveState(); render(); };
   if ($('membersBtn')) $('membersBtn').onclick = () => { state.view = 'members'; saveState(); render(); };
   if ($('settingsBtn')) $('settingsBtn').onclick = () => {};
+  if ($('changePlanBtn')) $('changePlanBtn').onclick = () => {
+    const newPlan = state.plan === '180' ? '365' : '180';
+    const label = newPlan === '365' ? '365일' : '180일';
+    if (!confirm(`통독 기간을 ${label}로 변경할까요?\n읽음 기록이 새 기간에 맞게 변환됩니다.`)) return;
+    const converted = convertReadDays(state.readDays, state.plan, newPlan);
+    state.readDays = converted;
+    state.plan = newPlan;
+    state.viewDay = null;
+    applyPlan(newPlan);
+    saveState();
+    if (state.mode === 'group' && state.groupId) {
+      Groups.joinGroup({ code: state.groupId, displayName: state.displayName, plan: newPlan }).catch(() => {});
+    }
+    if (state.mode === 'solo' && isGoogleLinked()) {
+      pushSoloData({ readDays: state.readDays });
+    }
+    toast(`${label} 통독으로 변경되었어요`);
+    render();
+  };
   if ($('saveSoloBtn')) $('saveSoloBtn').onclick = () => {
     const d = $('startDate').value;
     if (!d) { alert('시작일을 선택해주세요'); return; }
@@ -1395,22 +1518,22 @@ function bindSettings() {
     const dn = $('displayName').value.trim();
     if (!dn) { alert('이름을 입력해주세요'); return; }
     try {
-      await Groups.joinGroup({ code: state.groupId, displayName: dn });
+      await Groups.joinGroup({ code: state.groupId, displayName: dn, plan: state.plan });
       state.displayName = dn;
       saveState();
       toast('저장되었어요');
     } catch (e) { alert('저장 실패: ' + e.message); }
   };
   if ($('shareLinkBtn')) $('shareLinkBtn').onclick = async () => {
-    const link = `${SITE_URL}?join=${state.groupId}`;
-    const msg = `📖 성경 통독 180일 — 함께해요!\n조: ${effectiveTitle()}\n${link}`;
+    const link = inviteLink(state.groupId);
+    const msg = `📖 성경 통독 ${TOTAL_DAYS}일 — 함께해요!\n조: ${effectiveTitle()}\n${link}`;
     if (navigator.share) {
       try { await navigator.share({ title: '성경 통독 초대', text: msg }); }
       catch (e) { if (e.name !== 'AbortError') fallbackCopy(msg, '복사했어요'); }
     } else fallbackCopy(msg, '복사했어요');
   };
   if ($('copyLinkBtn')) $('copyLinkBtn').onclick = () => {
-    fallbackCopy(`${SITE_URL}?join=${state.groupId}`, '링크를 복사했어요');
+    fallbackCopy(inviteLink(state.groupId), '링크를 복사했어요');
   };
   if ($('leaveBtn')) $('leaveBtn').onclick = async () => {
     if (!confirm(`조 "${effectiveTitle()}"에서 나가시겠어요?\n진도 기록은 사라지지 않지만 조원들 진도는 더 이상 볼 수 없게 돼요.`)) return;

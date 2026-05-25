@@ -93,7 +93,7 @@
     return currentUser;
   }
 
-  async function createGroup({ name, startDate, displayName }) {
+  async function createGroup({ name, startDate, displayName, plan }) {
     const user = await ensureSignedIn();
     let code;
     for (let i = 0; i < 10; i++) {
@@ -110,6 +110,7 @@
     });
     await db.collection('groups').doc(code).collection('members').doc(user.uid).set({
       displayName,
+      plan: plan || '180',
       readDays: {},
       joinedAt: now,
       updatedAt: now
@@ -124,7 +125,7 @@
     return snap.data();
   }
 
-  async function joinGroup({ code, displayName, existingReadDays }) {
+  async function joinGroup({ code, displayName, existingReadDays, plan }) {
     const user = await ensureSignedIn();
     const snap = await db.collection('groups').doc(code).get();
     if (!snap.exists) throw new Error('그룹을 찾을 수 없어요. 코드를 확인해주세요');
@@ -132,10 +133,13 @@
     const memberSnap = await memberRef.get();
     const now = firebase.firestore.FieldValue.serverTimestamp();
     if (memberSnap.exists) {
-      await memberRef.update({ displayName, updatedAt: now });
+      const updateData = { displayName, updatedAt: now };
+      if (plan) updateData.plan = plan;
+      await memberRef.update(updateData);
     } else {
       await memberRef.set({
         displayName,
+        plan: plan || '180',
         readDays: existingReadDays || {},
         joinedAt: now,
         updatedAt: now
