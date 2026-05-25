@@ -1515,9 +1515,11 @@ function bindSettings() {
     const label = newPlan === '365' ? '365일' : '180일';
     if (!confirm(`통독 기간을 ${label}로 변경할까요?\n읽음 기록이 새 기간에 맞게 변환됩니다.`)) return;
     const converted = convertReadDays(state.readDays, state.plan, newPlan);
+    const lastRead = Object.keys(converted).filter(k => converted[k]).map(Number);
+    const lastDay = lastRead.length ? Math.max(...lastRead) : null;
     state.readDays = converted;
     state.plan = newPlan;
-    state.viewDay = null;
+    state.viewDay = lastDay;
     applyPlan(newPlan);
     saveState();
     if (state.mode === 'group' && state.groupId) {
