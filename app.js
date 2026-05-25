@@ -1561,6 +1561,11 @@ function bindSettings() {
     if (!confirm('읽음 진도만 초기화할까요?')) return;
     state.readDays = {};
     saveState();
+    if (state.mode === 'group' && state.groupId) {
+      Groups.setReadDays(state.groupId, state.readDays).catch(e => console.error('sync', e));
+    } else if (state.mode === 'solo') {
+      pushSoloData({ readDays: state.readDays });
+    }
     toast('진도가 초기화되었어요');
     render();
   };
