@@ -130,8 +130,14 @@ function subscribeSolo() {
     if (data.groupName !== undefined && data.groupName !== state.groupName) {
       state.groupName = data.groupName; changed = true;
     }
-    if (data.readDays && JSON.stringify(data.readDays) !== JSON.stringify(state.readDays)) {
-      state.readDays = data.readDays; changed = true;
+    if (data.readDays) {
+      const filtered = {};
+      for (const k in data.readDays) {
+        if (data.readDays[k] && +k >= 1 && +k <= TOTAL_DAYS) filtered[k] = true;
+      }
+      if (JSON.stringify(filtered) !== JSON.stringify(state.readDays)) {
+        state.readDays = filtered; changed = true;
+      }
     }
     if (changed) { saveState(); render(); }
   });
@@ -395,7 +401,11 @@ function subscribeToGroup() {
       volatile.members = members;
       const me = members.find(m => m.uid === volatile.userId);
       if (me && me.readDays) {
-        state.readDays = me.readDays;
+        const filtered = {};
+        for (const k in me.readDays) {
+          if (me.readDays[k] && +k >= 1 && +k <= TOTAL_DAYS) filtered[k] = true;
+        }
+        state.readDays = filtered;
         saveState();
       }
       render();
