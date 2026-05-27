@@ -210,9 +210,10 @@
     );
   }
 
-  async function replaceSoloReadDays(uid, readDays) {
+  async function replaceSoloReadDays(uid, readDays, extraFields) {
     await db.collection('users').doc(uid).update({
       readDays,
+      ...(extraFields || {}),
       updatedAt: firebase.firestore.FieldValue.serverTimestamp()
     });
   }

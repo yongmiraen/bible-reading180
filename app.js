@@ -1533,8 +1533,7 @@ function bindSettings() {
       Groups.replaceReadDays(state.groupId, state.readDays).catch(() => {});
     }
     if (state.mode === 'solo' && isGoogleLinked()) {
-      Groups.replaceSoloReadDays(volatile.userId, state.readDays).catch(() => {});
-      pushSoloData({ plan: newPlan });
+      Groups.replaceSoloReadDays(volatile.userId, state.readDays, { plan: newPlan }).catch(() => {});
     }
     toast(`${label} 통독으로 변경되었어요`);
     render();
