@@ -151,7 +151,8 @@ function subscribeSolo() {
 // 혼자 모드 Firestore에 현재 상태 저장
 function pushSoloData(patch) {
   if (state.mode !== 'solo' || !isGoogleLinked() || !volatile.userId) return;
-  Groups.saveSoloData(volatile.userId, patch).catch(e => console.error('solo save:', e));
+  const data = { plan: state.plan, ...patch };
+  Groups.saveSoloData(volatile.userId, data).catch(e => console.error('solo save:', e));
 }
 
 function loadState() {
