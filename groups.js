@@ -176,14 +176,6 @@
 
   async function setReadDays(code, readDays) {
     const user = await ensureSignedIn();
-    await db.collection('groups').doc(code).collection('members').doc(user.uid).set({
-      readDays,
-      updatedAt: firebase.firestore.FieldValue.serverTimestamp()
-    }, { merge: true });
-  }
-
-  async function replaceReadDays(code, readDays) {
-    const user = await ensureSignedIn();
     await db.collection('groups').doc(code).collection('members').doc(user.uid).update({
       readDays,
       updatedAt: firebase.firestore.FieldValue.serverTimestamp()
@@ -204,18 +196,14 @@
   }
 
   async function saveSoloData(uid, data) {
-    await db.collection('users').doc(uid).set(
-      { ...data, updatedAt: firebase.firestore.FieldValue.serverTimestamp() },
-      { merge: true }
-    );
-  }
-
-  async function replaceSoloReadDays(uid, readDays, extraFields) {
-    await db.collection('users').doc(uid).update({
-      readDays,
-      ...(extraFields || {}),
-      updatedAt: firebase.firestore.FieldValue.serverTimestamp()
-    });
+    const ref = db.collection('users').doc(uid);
+    const payload = { ...data, updatedAt: firebase.firestore.FieldValue.serverTimestamp() };
+    try {
+      await ref.update(payload);
+    } catch (e) {
+      if (e.code === 'not-found') await ref.set(payload);
+      else throw e;
+    }
   }
 
   function getUserId() {
@@ -278,12 +266,10 @@
     subscribeGroup,
     unsubscribe,
     setReadDays,
-    replaceReadDays,
     updateGroupMeta,
     linkOrSignInGoogle,
     signOutToAnonymous,
     watchSoloData,
     saveSoloData,
-    replaceSoloReadDays,
   };
 })();
