@@ -122,8 +122,13 @@ function subscribeSolo() {
   if (soloUnsub) { soloUnsub(); soloUnsub = null; }
   if (!volatile.userId || !isGoogleLinked()) return;
   soloUnsub = Groups.watchSoloData(volatile.userId, (data) => {
-    if (!data) return; // 서버에 아직 데이터 없음 (첫 사용)
+    if (!data) return;
     let changed = false;
+    if (data.plan && data.plan !== state.plan) {
+      state.plan = data.plan;
+      applyPlan(data.plan);
+      changed = true;
+    }
     if (data.startDate && data.startDate !== state.startDate) {
       state.startDate = data.startDate; changed = true;
     }
@@ -855,7 +860,7 @@ function bindSoloSetup() {
     state.viewDay = null;
     saveState();
     subscribeSolo(); // Google 연동 상태면 구독 시작
-    pushSoloData({ startDate: state.startDate, groupName: state.groupName, readDays: state.readDays });
+    pushSoloData({ plan: state.plan, startDate: state.startDate, groupName: state.groupName, readDays: state.readDays });
     render();
   };
 }
@@ -1526,7 +1531,7 @@ function bindSettings() {
       Groups.joinGroup({ code: state.groupId, displayName: state.displayName, plan: newPlan }).catch(() => {});
     }
     if (state.mode === 'solo' && isGoogleLinked()) {
-      pushSoloData({ readDays: state.readDays });
+      pushSoloData({ plan: newPlan, readDays: state.readDays });
     }
     toast(`${label} 통독으로 변경되었어요`);
     render();
@@ -1594,7 +1599,7 @@ function bindSettings() {
         toast('Google 계정에 연결되었어요. 다른 기기에서도 같은 계정으로 동기화돼요.');
         if (state.mode === 'solo') {
           subscribeSolo();
-          pushSoloData({ startDate: state.startDate, groupName: state.groupName, readDays: state.readDays });
+          pushSoloData({ plan: state.plan, startDate: state.startDate, groupName: state.groupName, readDays: state.readDays });
         }
         render();
       } else {
