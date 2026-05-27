@@ -249,6 +249,35 @@ header h1{font-size:1.15rem;margin:0;font-weight:700;letter-spacing:-.5px}
 .actions button:hover{border-color:var(--accent);color:var(--accent)}
 .bulk-read-btn{width:100%;padding:14px;margin:14px 0;font-size:.88rem;color:var(--muted);border:1px solid var(--line);border-radius:14px;background:var(--card);box-shadow:var(--shadow)}
 .bulk-read-btn:hover{border-color:var(--accent);color:var(--accent)}
+/* Highlight colors */
+.verse[data-hl="yellow"],.verse-compare[data-hl="yellow"]{background:#fef9c3;border-radius:4px}
+.verse[data-hl="green"],.verse-compare[data-hl="green"]{background:#dcfce7;border-radius:4px}
+.verse[data-hl="pink"],.verse-compare[data-hl="pink"]{background:#fce7f3;border-radius:4px}
+.verse[data-hl="blue"],.verse-compare[data-hl="blue"]{background:#dbeafe;border-radius:4px}
+
+/* Highlight toolbar */
+#hl-toolbar{
+  display:none;position:fixed;z-index:150;
+  background:#fff;border:1px solid var(--line);border-radius:12px;
+  box-shadow:0 4px 20px rgba(0,0,0,.15);padding:6px 8px;
+  gap:4px;align-items:center;
+}
+#hl-toolbar.show{display:flex}
+.hl-btn{
+  width:32px;height:32px;border-radius:50%;border:2px solid transparent;
+  cursor:pointer;transition:.15s;
+}
+.hl-btn:hover{transform:scale(1.15)}
+.hl-btn[data-color="yellow"]{background:#fde047}
+.hl-btn[data-color="green"]{background:#86efac}
+.hl-btn[data-color="pink"]{background:#f9a8d4}
+.hl-btn[data-color="blue"]{background:#93c5fd}
+.hl-btn.hl-remove{
+  background:#fff;border:1.5px solid var(--line);
+  font-size:.75rem;display:flex;align-items:center;justify-content:center;color:var(--muted);
+}
+.hl-btn.hl-remove:hover{border-color:var(--bad);color:var(--bad)}
+
 .check.checked{
   background:var(--good);color:#fff;border-color:var(--good);
   box-shadow:0 3px 12px rgba(22,163,74,.35);
@@ -414,6 +443,13 @@ header h1{font-size:1.15rem;margin:0;font-weight:700;letter-spacing:-.5px}
 </head>
 <body>
   <div id="app"></div>
+  <div id="hl-toolbar">
+    <button class="hl-btn" data-color="yellow"></button>
+    <button class="hl-btn" data-color="green"></button>
+    <button class="hl-btn" data-color="pink"></button>
+    <button class="hl-btn" data-color="blue"></button>
+    <button class="hl-btn hl-remove" data-color="">✕</button>
+  </div>
 
   <script src="https://www.gstatic.com/firebasejs/10.13.2/firebase-app-compat.js"></script>
   <script src="https://www.gstatic.com/firebasejs/10.13.2/firebase-auth-compat.js"></script>

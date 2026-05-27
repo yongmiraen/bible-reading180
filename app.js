@@ -51,6 +51,7 @@ const defaultState = () => ({
   viewDay: null,
   view: 'main',
   bibleView: ['GAE'],   // 선택된 번역 배열 (1~2개). 가능: 'GAE','SAENEW','NIV'
+  highlights: {},       // { "창1:3": "yellow", "시23:1": "pink", ... }
 });
 
 // 이전 버전 호환: 문자열이면 배열로 변환
@@ -143,6 +144,9 @@ function subscribeSolo() {
       if (JSON.stringify(filtered) !== JSON.stringify(state.readDays)) {
         state.readDays = filtered; changed = true;
       }
+    }
+    if (data.highlights && JSON.stringify(data.highlights) !== JSON.stringify(state.highlights)) {
+      state.highlights = data.highlights; changed = true;
     }
     if (changed) { saveState(); render(); }
   });
@@ -286,10 +290,12 @@ function renderRangesHTML(ranges) {
           if (!text) return '';
           return `<p class="ver-line ${ver.toLowerCase()}"><span class="ver-tag">${VERSION_TAG[ver]}</span>${escapeHtml(text)}</p>`;
         }).filter(Boolean).join('');
-        chBuf.push(`<div class="verse-compare"><span class="vnum">${v}</span>${verseLines}</div>`);
+        const hlC = state.highlights[`${b}${ch}:${v}`];
+        chBuf.push(`<div class="verse-compare" data-ref="${b}${ch}:${v}"${hlC?` data-hl="${hlC}"`:``}><span class="vnum">${v}</span>${verseLines}</div>`);
       } else {
         const text = d[view[0]] || d.GAE;
-        chBuf.push(`<p class="verse"><span class="vnum">${v}</span>${escapeHtml(text)}</p>`);
+        const hlS = state.highlights[`${b}${ch}:${v}`];
+        chBuf.push(`<p class="verse" data-ref="${b}${ch}:${v}"${hlS?` data-hl="${hlS}"`:``}><span class="vnum">${v}</span>${escapeHtml(text)}</p>`);
       }
     });
     if (chBuf.length) parts.push(`<div class="chapter"><h4 class="ch-title">${chHeader}</h4>${chBuf.join('')}</div>`);
@@ -1649,3 +1655,84 @@ function bindSettings() {
     render();
   };
 }
+
+// === 형광펜 ===
+(function initHighlighter() {
+  const toolbar = document.getElementById('hl-toolbar');
+  if (!toolbar) return;
+  let _targetRef = null;
+
+  function findVerseEl(node) {
+    while (node && node !== document.body) {
+      if (node.dataset && node.dataset.ref) return node;
+      node = node.parentElement;
+    }
+    return null;
+  }
+
+  function showToolbar(rect) {
+    const tb = toolbar;
+    tb.classList.add('show');
+    const tbW = tb.offsetWidth || 180;
+    let left = rect.left + rect.width / 2 - tbW / 2;
+    left = Math.max(8, Math.min(left, window.innerWidth - tbW - 8));
+    let top = rect.top - 48;
+    if (top < 8) top = rect.bottom + 8;
+    tb.style.left = left + 'px';
+    tb.style.top = top + 'px';
+  }
+
+  function hideToolbar() {
+    toolbar.classList.remove('show');
+    _targetRef = null;
+  }
+
+  function applyHighlight(color) {
+    if (!_targetRef) return;
+    if (color) {
+      state.highlights[_targetRef] = color;
+    } else {
+      delete state.highlights[_targetRef];
+    }
+    saveState();
+    pushSoloData({ highlights: state.highlights });
+    if (state.mode === 'group' && state.groupId) {
+      Groups.setReadDays(state.groupId, state.readDays).catch(() => {});
+    }
+    const el = document.querySelector(`[data-ref="${_targetRef}"]`);
+    if (el) {
+      if (color) el.setAttribute('data-hl', color);
+      else el.removeAttribute('data-hl');
+    }
+    hideToolbar();
+    window.getSelection().removeAllRanges();
+  }
+
+  toolbar.querySelectorAll('.hl-btn').forEach(btn => {
+    btn.addEventListener('click', (e) => {
+      e.preventDefault();
+      e.stopPropagation();
+      applyHighlight(btn.dataset.color);
+    });
+  });
+
+  document.addEventListener('selectionchange', () => {
+    const sel = window.getSelection();
+    if (!sel || sel.isCollapsed || !sel.rangeCount) { hideToolbar(); return; }
+    const range = sel.getRangeAt(0);
+    const verseEl = findVerseEl(range.startContainer) || findVerseEl(range.endContainer);
+    if (!verseEl) { hideToolbar(); return; }
+    _targetRef = verseEl.dataset.ref;
+    const rect = range.getBoundingClientRect();
+    showToolbar(rect);
+  });
+
+  document.addEventListener('click', (e) => {
+    if (toolbar.contains(e.target)) return;
+    const sel = window.getSelection();
+    if (sel && !sel.isCollapsed) return;
+    hideToolbar();
+  });
+
+  document.addEventListener('scroll', hideToolbar, true);
+})();
