@@ -1584,9 +1584,9 @@ function bindSettings() {
     state.readDays = {};
     saveState();
     if (state.mode === 'group' && state.groupId) {
-      Groups.setReadDays(state.groupId, state.readDays).catch(e => console.error('sync', e));
-    } else if (state.mode === 'solo') {
-      pushSoloData({ readDays: state.readDays });
+      Groups.resetReadDays(state.groupId).catch(e => console.error('sync', e));
+    } else if (state.mode === 'solo' && isGoogleLinked()) {
+      Groups.resetSoloReadDays(volatile.userId).catch(e => console.error('sync', e));
     }
     toast('진도가 초기화되었어요');
     render();
