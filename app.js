@@ -1530,9 +1530,11 @@ function bindSettings() {
     saveState();
     if (state.mode === 'group' && state.groupId) {
       Groups.joinGroup({ code: state.groupId, displayName: state.displayName, plan: newPlan }).catch(() => {});
+      Groups.replaceReadDays(state.groupId, state.readDays).catch(() => {});
     }
     if (state.mode === 'solo' && isGoogleLinked()) {
-      pushSoloData({ plan: newPlan, readDays: state.readDays });
+      Groups.replaceSoloReadDays(volatile.userId, state.readDays).catch(() => {});
+      pushSoloData({ plan: newPlan });
     }
     toast(`${label} 통독으로 변경되었어요`);
     render();
@@ -1584,9 +1586,9 @@ function bindSettings() {
     state.readDays = {};
     saveState();
     if (state.mode === 'group' && state.groupId) {
-      Groups.resetReadDays(state.groupId).catch(e => console.error('sync', e));
+      Groups.replaceReadDays(state.groupId, {}).catch(e => console.error('sync', e));
     } else if (state.mode === 'solo' && isGoogleLinked()) {
-      Groups.resetSoloReadDays(volatile.userId).catch(e => console.error('sync', e));
+      Groups.replaceSoloReadDays(volatile.userId, {}).catch(e => console.error('sync', e));
     }
     toast('진도가 초기화되었어요');
     render();

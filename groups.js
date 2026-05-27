@@ -182,10 +182,10 @@
     }, { merge: true });
   }
 
-  async function resetReadDays(code) {
+  async function replaceReadDays(code, readDays) {
     const user = await ensureSignedIn();
     await db.collection('groups').doc(code).collection('members').doc(user.uid).update({
-      readDays: {},
+      readDays,
       updatedAt: firebase.firestore.FieldValue.serverTimestamp()
     });
   }
@@ -210,9 +210,9 @@
     );
   }
 
-  async function resetSoloReadDays(uid) {
+  async function replaceSoloReadDays(uid, readDays) {
     await db.collection('users').doc(uid).update({
-      readDays: {},
+      readDays,
       updatedAt: firebase.firestore.FieldValue.serverTimestamp()
     });
   }
@@ -277,12 +277,12 @@
     subscribeGroup,
     unsubscribe,
     setReadDays,
-    resetReadDays,
+    replaceReadDays,
     updateGroupMeta,
     linkOrSignInGoogle,
     signOutToAnonymous,
     watchSoloData,
     saveSoloData,
-    resetSoloReadDays,
+    replaceSoloReadDays,
   };
 })();
