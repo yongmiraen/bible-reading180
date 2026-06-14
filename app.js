@@ -106,7 +106,15 @@ let volatile = {
   members: [],          // [{uid, displayName, readDays, ...}]
   syncStatus: 'idle',   // 'idle' | 'syncing' | 'error'
   authReady: false,
+  needsLogin: false,    // Google 로그인 게이트 표시 여부
   userId: null,
+  // 기도제목
+  prayers: [],          // [{id, authorUid, authorName, text, createdAt, updatedAt}]
+  prayerUnsub: null,
+  comments: {},         // { prayerId: [{id, authorUid, authorName, text, createdAt}] }
+  commentUnsubs: {},    // { prayerId: unsub }
+  openComments: {},     // { prayerId: true }
+  editingPrayer: null,  // 인라인 수정 중인 prayerId
 };
 let pendingInviteCode = null;
 let lastInviteCode = null;
@@ -437,9 +445,11 @@ function exitGroup() {
 // === 초기화 ===
 async function init() {
   const params = new URLSearchParams(location.search);
-  const joinCode = params.get('join');
+  // 초대 코드: URL 우선, 없으면 로그인 reload를 위해 sessionStorage에 보존해둔 값 사용
+  const joinCode = params.get('join') || sessionStorage.getItem('pendingInvite');
   if (joinCode) {
     pendingInviteCode = joinCode.toUpperCase();
+    sessionStorage.setItem('pendingInvite', pendingInviteCode);
     history.replaceState(null, '', location.pathname);
   }
 
@@ -453,6 +463,22 @@ async function init() {
       '<div class="setup"><h1>📖 성경 통독</h1><p class="lead">인증 오류 — 인터넷 연결을 확인해주세요</p></div>';
     return;
   }
+
+  // 구글 로그인 게이트 — 모든 사용자 시작 시 Google 로그인 필수
+  // (PC/모바일에서 같은 사람으로 인식되어야 조장 권한·진도가 유지됨)
+  if (!isGoogleLinked()) {
+    volatile.needsLogin = true;
+    render();
+    return;
+  }
+  volatile.needsLogin = false;
+
+  // 🙏 기도 탭 라우팅 (전역 1회 등록)
+  document.addEventListener('click', (e) => {
+    if (e.target.closest('#prayerBtn')) {
+      state.view = 'prayer'; saveState(); render();
+    }
+  });
 
   if (pendingInviteCode) {
     state.view = 'join-from-link';
@@ -478,6 +504,15 @@ function render() {
     app.innerHTML = '<div class="setup"><h1>📖 성경 통독</h1><p class="lead">불러오는 중...</p></div>';
     return;
   }
+
+  if (volatile.needsLogin) {
+    app.innerHTML = renderLoginGate();
+    bindLoginGate();
+    return;
+  }
+
+  // 기도 탭을 벗어나면 구독 정리
+  if (state.view !== 'prayer') cleanupPrayerSubs();
 
   if (!state.plan) {
     app.innerHTML = renderPlanSelect();
@@ -537,6 +572,15 @@ function render() {
     app.innerHTML = renderMembers();
     bindMembers();
     return;
+  }
+  if (state.view === 'prayer') {
+    if (state.mode !== 'group' || !state.groupId) { state.view = 'main'; saveState(); }
+    else {
+      app.innerHTML = renderPrayer();
+      bindPrayer();
+      ensurePrayerSub();
+      return;
+    }
   }
   if (state.view === 'feedback') {
     app.innerHTML = renderFeedback();
@@ -748,6 +792,7 @@ function renderHeader() {
         ${title ? `<div class="group-name">${escapeHtml(title)}</div>` : ''}
       </div>
       <div class="header-actions">
+        ${state.mode === 'group' ? `<button class="icon-btn" id="prayerBtn" title="기도제목">🙏</button>` : ''}
         ${state.mode === 'group' ? `<button class="icon-btn" id="membersBtn" title="조원">👥</button>` : ''}
         <button class="icon-btn" id="listBtn" title="전체 일정">📅</button>
         <button class="icon-btn" id="settingsBtn" title="설정">⚙️</button>
@@ -999,6 +1044,7 @@ function bindJoinForm(fromLink) {
       state.groupId = code;
       state.displayName = displayName;
       pendingInviteCode = null;
+      sessionStorage.removeItem('pendingInvite');
       state.view = 'main';
       state.viewDay = null;
       saveState();
@@ -1356,6 +1402,225 @@ function bindMembers() {
   if (document.getElementById('listBtn')) document.getElementById('listBtn').onclick = () => { state.view = 'list'; saveState(); render(); };
   if (document.getElementById('settingsBtn')) document.getElementById('settingsBtn').onclick = () => { state.view = 'settings'; saveState(); render(); };
   if (document.getElementById('membersBtn')) document.getElementById('membersBtn').onclick = () => {};
+}
+
+// === 로그인 게이트 (Google 로그인 강제) ===
+const GOOGLE_ICON = `<span style="display:inline-block;width:18px;height:18px;vertical-align:-4px;margin-right:8px;background:url('data:image/svg+xml;utf8,<svg xmlns=%22http://www.w3.org/2000/svg%22 viewBox=%220 0 48 48%22><path fill=%22%23FFC107%22 d=%22M43.6 20.1H42V20H24v8h11.3c-1.6 4.7-6.1 8-11.3 8-6.6 0-12-5.4-12-12s5.4-12 12-12c3.1 0 5.8 1.2 7.9 3.1l5.7-5.7C34.6 6.1 29.6 4 24 4 12.9 4 4 12.9 4 24s8.9 20 20 20 20-8.9 20-20c0-1.3-.1-2.6-.4-3.9z%22/><path fill=%22%23FF3D00%22 d=%22M6.3 14.7l6.6 4.8c1.8-4.4 6-7.5 11-7.5 3.1 0 5.8 1.2 7.9 3.1l5.7-5.7C34.6 6.1 29.6 4 24 4 16.1 4 9.3 8.4 6.3 14.7z%22/><path fill=%22%234CAF50%22 d=%22M24 44c5.5 0 10.5-2.1 14.3-5.5l-6.6-5.6C29.6 34.3 26.9 35 24 35c-5.2 0-9.6-3.3-11.2-7.9l-6.6 5.1C9.3 39.6 16.1 44 24 44z%22/><path fill=%22%231976D2%22 d=%22M43.6 20.1H42V20H24v8h11.3c-.8 2.3-2.3 4.3-4.3 5.7l6.6 5.6c-.5.4 7.4-5.4 7.4-15.3 0-1.3-.1-2.6-.4-3.9z%22/></svg>') center/contain no-repeat"></span>`;
+
+function renderLoginGate() {
+  return `
+    <div class="setup" style="text-align:center;max-width:420px;margin:0 auto;padding:40px 20px">
+      <div style="font-size:3rem">📖</div>
+      <h1 style="margin-top:8px">성경 통독</h1>
+      <p class="lead" style="margin-top:8px">Google 계정으로 로그인하면<br>PC·모바일 어디서든 같은 사람으로<br>진도와 조 활동이 이어져요.</p>
+      <button class="primary" id="gateLoginBtn" style="margin-top:24px;background:#fff;color:var(--text);border:1.5px solid var(--line);width:100%">
+        ${GOOGLE_ICON}Google로 시작하기
+      </button>
+      <p class="hint" id="gateStatus" style="margin-top:12px">＊ Safari 개인정보보호(시크릿) 탭이라면 일반 탭에서 열어주세요</p>
+    </div>`;
+}
+
+function bindLoginGate() {
+  const btn = document.getElementById('gateLoginBtn');
+  const status = document.getElementById('gateStatus');
+  if (!btn) return;
+  btn.onclick = async () => {
+    btn.disabled = true; btn.textContent = '로그인 중...';
+    if (status) status.textContent = '';
+    try {
+      await Groups.linkOrSignInGoogle();
+      // 연결/로그인 후 인증 상태를 새로 읽기 위해 새로고침 → init이 게이트 통과
+      location.reload();
+    } catch (e) {
+      btn.disabled = false; btn.innerHTML = `${GOOGLE_ICON}Google로 시작하기`;
+      if (e.code === 'auth/popup-closed-by-user' || e.code === 'auth/cancelled-popup-request') {
+        if (status) status.textContent = '로그인이 취소되었어요. 다시 시도해주세요.';
+        return;
+      }
+      if (status) status.textContent = '로그인 실패: ' + (e.message || e.code || e);
+    }
+  };
+}
+
+// === 기도제목 (조모드) ===
+function isGroupOwner() {
+  return !!(volatile.groupData && volatile.groupData.owner === volatile.userId);
+}
+
+function memberName(uid, fallback) {
+  const m = volatile.members.find(x => x.uid === uid);
+  return (m && m.displayName) || fallback || '익명';
+}
+
+function myDisplayName() {
+  return state.displayName || memberName(volatile.userId) || '익명';
+}
+
+function ensurePrayerSub() {
+  if (volatile.prayerUnsub || !state.groupId) return;
+  volatile.prayerUnsub = Groups.subscribePrayers(state.groupId, (arr) => {
+    volatile.prayers = arr;
+    if (state.view === 'prayer') render();
+  });
+}
+
+function cleanupPrayerSubs() {
+  if (volatile.prayerUnsub) { volatile.prayerUnsub(); volatile.prayerUnsub = null; }
+  for (const id in volatile.commentUnsubs) {
+    try { volatile.commentUnsubs[id](); } catch (e) {}
+  }
+  volatile.commentUnsubs = {};
+  volatile.comments = {};
+  volatile.openComments = {};
+  volatile.prayers = [];
+  volatile.editingPrayer = null;
+}
+
+function toggleComments(prayerId) {
+  if (volatile.openComments[prayerId]) {
+    delete volatile.openComments[prayerId];
+    if (volatile.commentUnsubs[prayerId]) {
+      try { volatile.commentUnsubs[prayerId](); } catch (e) {}
+      delete volatile.commentUnsubs[prayerId];
+    }
+    delete volatile.comments[prayerId];
+  } else {
+    volatile.openComments[prayerId] = true;
+    volatile.commentUnsubs[prayerId] = Groups.subscribeComments(state.groupId, prayerId, (arr) => {
+      volatile.comments[prayerId] = arr;
+      if (state.view === 'prayer') render();
+    });
+  }
+  render();
+}
+
+function renderPrayerCard(p) {
+  const name = memberName(p.authorUid, p.authorName);
+  const isMine = p.authorUid === volatile.userId;
+  const canManage = isMine || isGroupOwner();
+  const time = p.createdAt ? relativeTime(p.createdAt) : '방금 전';
+  const edited = p.updatedAt && p.createdAt && p.updatedAt.seconds > p.createdAt.seconds
+    ? ' <span class="prayer-edited">(수정됨)</span>' : '';
+
+  if (volatile.editingPrayer === p.id) {
+    return `<div class="prayer-card">
+      <div class="prayer-head"><span class="prayer-author">${escapeHtml(name)}${isMine?'<span class="you-tag">나</span>':''}</span></div>
+      <textarea class="prayer-edit-area" id="pedit-${p.id}" rows="3" maxlength="1000">${escapeHtml(p.text)}</textarea>
+      <div class="prayer-actions">
+        <button class="prayer-mini-btn" data-act="edit-save" data-id="${p.id}">저장</button>
+        <button class="prayer-mini-btn ghost" data-act="edit-cancel" data-id="${p.id}">취소</button>
+      </div>
+    </div>`;
+  }
+
+  const open = !!volatile.openComments[p.id];
+  const comments = volatile.comments[p.id] || [];
+  const commentsHtml = open ? `
+    <div class="comment-thread">
+      ${comments.map(c => {
+        const cName = memberName(c.authorUid, c.authorName);
+        const cCanDel = c.authorUid === volatile.userId || isGroupOwner();
+        return `<div class="comment-row">
+          <span class="comment-body"><b>${escapeHtml(cName)}</b> ${escapeHtml(c.text)}</span>
+          ${cCanDel ? `<button class="comment-del-btn" data-act="comment-del" data-pid="${p.id}" data-cid="${c.id}" title="삭제">✕</button>` : ''}
+        </div>`;
+      }).join('') || '<p class="comment-empty">첫 댓글을 남겨보세요</p>'}
+      <div class="comment-compose">
+        <input type="text" class="comment-input" id="cinput-${p.id}" maxlength="500" placeholder="응원/기도 댓글...">
+        <button class="comment-send-btn" data-act="comment-send" data-pid="${p.id}">등록</button>
+      </div>
+    </div>` : '';
+
+  return `<div class="prayer-card">
+    <div class="prayer-head">
+      <span class="prayer-author">${escapeHtml(name)}${isMine?'<span class="you-tag">나</span>':''}</span>
+      <span class="prayer-time">${time}${edited}</span>
+    </div>
+    <div class="prayer-text">${escapeHtml(p.text)}</div>
+    <div class="prayer-actions">
+      <button class="prayer-mini-btn ghost" data-act="comment-toggle" data-id="${p.id}">💬 댓글${comments.length?` ${comments.length}`:''}</button>
+      ${canManage ? `<button class="prayer-mini-btn ghost" data-act="edit" data-id="${p.id}">수정</button>
+      <button class="prayer-mini-btn ghost danger-text" data-act="del" data-id="${p.id}">삭제</button>` : ''}
+    </div>
+    ${commentsHtml}
+  </div>`;
+}
+
+function renderPrayer() {
+  const feed = volatile.prayers.length
+    ? volatile.prayers.map(renderPrayerCard).join('')
+    : '<p style="color:var(--muted);text-align:center;padding:24px">아직 올라온 기도제목이 없어요.<br>첫 기도제목을 나눠보세요 🙏</p>';
+  return `
+    ${renderHeader()}
+    <button class="back-btn" id="backBtn">← 돌아가기</button>
+    <div class="card">
+      <h2 style="margin-top:4px">🙏 우리 조 기도제목</h2>
+      <textarea id="prayerInput" class="prayer-compose" rows="3" maxlength="1000" placeholder="함께 기도하고 싶은 제목을 나눠주세요..."></textarea>
+      <button class="primary" id="prayerSubmit" style="margin-top:8px">기도제목 올리기</button>
+    </div>
+    <div id="prayerFeed">${feed}</div>`;
+}
+
+function bindPrayer() {
+  const $ = id => document.getElementById(id);
+  $('backBtn').onclick = () => { state.view = 'main'; saveState(); render(); };
+  if ($('listBtn')) $('listBtn').onclick = () => { state.view = 'list'; saveState(); render(); };
+  if ($('settingsBtn')) $('settingsBtn').onclick = () => { state.view = 'settings'; saveState(); render(); };
+  if ($('membersBtn')) $('membersBtn').onclick = () => { state.view = 'members'; saveState(); render(); };
+
+  $('prayerSubmit').onclick = async () => {
+    const ta = $('prayerInput');
+    const text = ta.value.trim();
+    if (!text) { alert('기도제목을 입력해주세요'); return; }
+    const btn = $('prayerSubmit');
+    btn.disabled = true; btn.textContent = '올리는 중...';
+    try {
+      await Groups.addPrayer(state.groupId, text, myDisplayName());
+      ta.value = '';
+    } catch (e) {
+      alert('등록 실패: ' + (e.message || e));
+    } finally {
+      btn.disabled = false; btn.textContent = '기도제목 올리기';
+    }
+  };
+
+  const feed = $('prayerFeed');
+  if (!feed) return;
+  feed.querySelectorAll('[data-act]').forEach(el => {
+    const act = el.getAttribute('data-act');
+    const id = el.getAttribute('data-id');
+    if (act === 'comment-toggle') el.onclick = () => toggleComments(id);
+    else if (act === 'edit') el.onclick = () => { volatile.editingPrayer = id; render(); };
+    else if (act === 'edit-cancel') el.onclick = () => { volatile.editingPrayer = null; render(); };
+    else if (act === 'edit-save') el.onclick = async () => {
+      const text = $(`pedit-${id}`).value.trim();
+      if (!text) { alert('내용을 입력해주세요'); return; }
+      try { await Groups.editPrayer(state.groupId, id, text); volatile.editingPrayer = null; render(); }
+      catch (e) { alert('수정 실패: ' + (e.message || e)); }
+    };
+    else if (act === 'del') el.onclick = async () => {
+      if (!confirm('이 기도제목을 삭제할까요? 댓글도 함께 삭제됩니다.')) return;
+      try { await Groups.deletePrayer(state.groupId, id); }
+      catch (e) { alert('삭제 실패: ' + (e.message || e)); }
+    };
+    else if (act === 'comment-send') el.onclick = async () => {
+      const pid = el.getAttribute('data-pid');
+      const input = $(`cinput-${pid}`);
+      const text = input.value.trim();
+      if (!text) return;
+      el.disabled = true;
+      try { await Groups.addComment(state.groupId, pid, text, myDisplayName()); input.value = ''; }
+      catch (e) { alert('댓글 실패: ' + (e.message || e)); }
+      finally { el.disabled = false; }
+    };
+    else if (act === 'comment-del') el.onclick = async () => {
+      const pid = el.getAttribute('data-pid');
+      const cid = el.getAttribute('data-cid');
+      if (!confirm('댓글을 삭제할까요?')) return;
+      try { await Groups.deleteComment(state.groupId, pid, cid); }
+      catch (e) { alert('삭제 실패: ' + (e.message || e)); }
+    };
+  });
 }
 
 // === 건의사항 ===

@@ -428,6 +428,52 @@ header h1{font-size:1.15rem;margin:0;font-weight:700;letter-spacing:-.5px}
 .member-bar-fill{height:100%;background:var(--accent)}
 .members-card .member-row{grid-template-columns:1fr auto;row-gap:4px}
 
+/* Prayer requests */
+.prayer-compose{
+  width:100%;font-family:inherit;font-size:16px;padding:.7em .9em;
+  border:1.5px solid var(--line);border-radius:10px;background:#fff;color:var(--text);
+  margin-top:10px;resize:vertical;box-sizing:border-box;
+}
+.prayer-card{
+  background:var(--card);border:1px solid var(--line);border-radius:14px;
+  padding:14px 16px;box-shadow:var(--shadow);margin-bottom:12px;
+}
+.prayer-head{display:flex;justify-content:space-between;align-items:baseline;gap:8px;margin-bottom:6px}
+.prayer-author{font-weight:600;font-size:.95rem;display:flex;align-items:center;gap:6px}
+.prayer-time{font-size:.75rem;color:var(--muted);white-space:nowrap;flex-shrink:0}
+.prayer-edited{color:var(--muted);font-style:italic}
+.prayer-text{font-size:.95rem;line-height:1.55;white-space:pre-wrap;word-break:break-word}
+.prayer-edit-area{
+  width:100%;font-family:inherit;font-size:16px;padding:.6em .8em;
+  border:1.5px solid var(--accent);border-radius:10px;background:#fff;color:var(--text);
+  resize:vertical;box-sizing:border-box;
+}
+.prayer-actions{display:flex;gap:8px;margin-top:10px;flex-wrap:wrap}
+.prayer-mini-btn{
+  font-size:.8rem;padding:5px 12px;border-radius:8px;font-weight:600;
+  background:var(--accent);color:#fff;border:1px solid var(--accent);
+}
+.prayer-mini-btn.ghost{background:#fff;color:var(--muted);border:1px solid var(--line)}
+.prayer-mini-btn.ghost:hover{color:var(--text);border-color:var(--muted)}
+.prayer-mini-btn.danger-text{color:var(--bad)}
+.comment-thread{margin-top:12px;padding-top:10px;border-top:1px dashed var(--line)}
+.comment-row{display:flex;align-items:flex-start;gap:8px;padding:5px 0;font-size:.9rem;line-height:1.45}
+.comment-body{flex:1;word-break:break-word;white-space:pre-wrap}
+.comment-body b{margin-right:4px}
+.comment-del-btn{font-size:.7rem;color:var(--muted);padding:2px 6px;flex-shrink:0}
+.comment-del-btn:hover{color:var(--bad)}
+.comment-empty{color:var(--muted);font-size:.85rem;padding:4px 0}
+.comment-compose{display:flex;gap:6px;margin-top:8px}
+.comment-input{
+  flex:1;font-family:inherit;font-size:16px;padding:.5em .7em;
+  border:1.5px solid var(--line);border-radius:8px;background:#fff;color:var(--text);
+  min-width:0;box-sizing:border-box;
+}
+.comment-send-btn{
+  font-size:.8rem;padding:0 14px;border-radius:8px;font-weight:600;
+  background:var(--accent);color:#fff;border:1px solid var(--accent);flex-shrink:0;
+}
+
 /* Sync indicator */
 .sync-status{
   font-size:.72rem;color:var(--muted);text-align:center;margin-top:8px;

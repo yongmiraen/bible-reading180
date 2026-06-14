@@ -187,6 +187,80 @@
     await db.collection('groups').doc(code).update(patch);
   }
 
+  // === 기도제목 (조모드) ===
+  function prayersCol(code) {
+    return db.collection('groups').doc(code).collection('prayers');
+  }
+
+  function subscribePrayers(code, cb) {
+    return prayersCol(code).orderBy('createdAt', 'desc').onSnapshot(
+      qs => {
+        const arr = [];
+        qs.forEach(d => arr.push({ id: d.id, ...d.data() }));
+        cb(arr);
+      },
+      err => console.error('prayers sub error:', err)
+    );
+  }
+
+  async function addPrayer(code, text, authorName) {
+    const user = await ensureSignedIn();
+    const now = firebase.firestore.FieldValue.serverTimestamp();
+    await prayersCol(code).add({
+      authorUid: user.uid,
+      authorName: authorName || '익명',
+      text,
+      createdAt: now,
+      updatedAt: now
+    });
+  }
+
+  async function editPrayer(code, prayerId, text) {
+    await ensureSignedIn();
+    await prayersCol(code).doc(prayerId).update({
+      text,
+      updatedAt: firebase.firestore.FieldValue.serverTimestamp()
+    });
+  }
+
+  async function deletePrayer(code, prayerId) {
+    await ensureSignedIn();
+    const ref = prayersCol(code).doc(prayerId);
+    // 하위 댓글까지 batch 삭제
+    const comments = await ref.collection('comments').get();
+    const batch = db.batch();
+    comments.forEach(c => batch.delete(c.ref));
+    batch.delete(ref);
+    await batch.commit();
+  }
+
+  function subscribeComments(code, prayerId, cb) {
+    return prayersCol(code).doc(prayerId).collection('comments')
+      .orderBy('createdAt', 'asc').onSnapshot(
+        qs => {
+          const arr = [];
+          qs.forEach(d => arr.push({ id: d.id, ...d.data() }));
+          cb(arr);
+        },
+        err => console.error('comments sub error:', err)
+      );
+  }
+
+  async function addComment(code, prayerId, text, authorName) {
+    const user = await ensureSignedIn();
+    await prayersCol(code).doc(prayerId).collection('comments').add({
+      authorUid: user.uid,
+      authorName: authorName || '익명',
+      text,
+      createdAt: firebase.firestore.FieldValue.serverTimestamp()
+    });
+  }
+
+  async function deleteComment(code, prayerId, commentId) {
+    await ensureSignedIn();
+    await prayersCol(code).doc(prayerId).collection('comments').doc(commentId).delete();
+  }
+
   // 혼자 모드 클라우드 동기화
   function watchSoloData(uid, cb) {
     return db.collection('users').doc(uid).onSnapshot(
@@ -267,6 +341,13 @@
     unsubscribe,
     setReadDays,
     updateGroupMeta,
+    subscribePrayers,
+    addPrayer,
+    editPrayer,
+    deletePrayer,
+    subscribeComments,
+    addComment,
+    deleteComment,
     linkOrSignInGoogle,
     signOutToAnonymous,
     watchSoloData,

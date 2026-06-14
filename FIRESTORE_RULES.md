@@ -39,6 +39,11 @@ service cloud.firestore {
         && request.resource.data.readDays is map;
     }
 
+    function isPrayerOwner(groupId, prayerId) {
+      return signedIn()
+        && get(/databases/$(database)/documents/groups/$(groupId)/prayers/$(prayerId)).data.authorUid == request.auth.uid;
+    }
+
     match /groups/{groupId} {
       // 초대 코드로 참가할 수 있어야 해서 단일 문서 조회(get)는 허용합니다.
       // 전체 그룹 목록 조회(list)는 막습니다.
@@ -66,18 +71,67 @@ service cloud.firestore {
         allow create: if signedIn()
           && request.auth.uid == userId
           && exists(/databases/$(database)/documents/groups/$(groupId))
-          && request.resource.data.keys().hasOnly(['displayName', 'readDays', 'joinedAt', 'updatedAt'])
+          && request.resource.data.keys().hasOnly(['displayName', 'plan', 'readDays', 'joinedAt', 'updatedAt'])
           && validMemberData()
           && request.resource.data.joinedAt == request.time
           && request.resource.data.updatedAt == request.time;
 
         allow update: if signedIn()
           && request.auth.uid == userId
-          && request.resource.data.diff(resource.data).affectedKeys().hasOnly(['displayName', 'readDays', 'updatedAt'])
+          && request.resource.data.diff(resource.data).affectedKeys().hasOnly(['displayName', 'plan', 'readDays', 'updatedAt'])
           && validMemberData()
           && request.resource.data.updatedAt == request.time;
 
         allow delete: if signedIn() && request.auth.uid == userId;
+      }
+
+      // 기도제목: 같은 조 조원만 읽기. 작성은 본인 명의로만.
+      // 수정/삭제는 작성자 본인 또는 조장(owner).
+      match /prayers/{prayerId} {
+        allow get, list: if isGroupMember(groupId);
+
+        allow create: if isGroupMember(groupId)
+          && request.resource.data.authorUid == request.auth.uid
+          && request.resource.data.keys().hasOnly(['authorUid', 'authorName', 'text', 'createdAt', 'updatedAt'])
+          && request.resource.data.text is string
+          && request.resource.data.text.size() > 0
+          && request.resource.data.text.size() <= 1000
+          && request.resource.data.authorName is string
+          && request.resource.data.authorName.size() <= 20
+          && request.resource.data.createdAt == request.time
+          && request.resource.data.updatedAt == request.time;
+
+        allow update: if isGroupMember(groupId)
+          && (resource.data.authorUid == request.auth.uid || isGroupOwner(groupId))
+          && request.resource.data.diff(resource.data).affectedKeys().hasOnly(['text', 'updatedAt'])
+          && request.resource.data.text is string
+          && request.resource.data.text.size() > 0
+          && request.resource.data.text.size() <= 1000
+          && request.resource.data.updatedAt == request.time;
+
+        allow delete: if isGroupMember(groupId)
+          && (resource.data.authorUid == request.auth.uid || isGroupOwner(groupId));
+
+        // 댓글: 조원만 읽기. 작성은 본인 명의로만.
+        // 삭제는 댓글 작성자 본인, 글쓴이, 또는 조장.
+        match /comments/{commentId} {
+          allow get, list: if isGroupMember(groupId);
+
+          allow create: if isGroupMember(groupId)
+            && request.resource.data.authorUid == request.auth.uid
+            && request.resource.data.keys().hasOnly(['authorUid', 'authorName', 'text', 'createdAt'])
+            && request.resource.data.text is string
+            && request.resource.data.text.size() > 0
+            && request.resource.data.text.size() <= 500
+            && request.resource.data.authorName is string
+            && request.resource.data.authorName.size() <= 20
+            && request.resource.data.createdAt == request.time;
+
+          allow delete: if isGroupMember(groupId)
+            && (resource.data.authorUid == request.auth.uid
+                || isPrayerOwner(groupId, prayerId)
+                || isGroupOwner(groupId));
+        }
       }
     }
   }
