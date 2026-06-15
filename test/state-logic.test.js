@@ -34,3 +34,27 @@ test('migrateState: already-migrated state passes through (idempotent)', () => {
   assert.deepStrictEqual(s.soloStash, cur.soloStash);
   assert.strictEqual(s.groupRef, null);
 });
+
+test('mergeProfile: cloud solo readDays union with local, scalars prefer cloud', () => {
+  const localSolo = { plan: '180', startDate: '2026-01-01', groupName: 'L', readDays: { 1: true } };
+  const cloud = { activeMode: 'group', solo: { plan: '365', startDate: '2026-02-02', groupName: 'C', readDays: { 3: true } }, groupRef: { groupId: 'XY', displayName: '용환' } };
+  const m = SL.mergeProfile(localSolo, cloud);
+  assert.strictEqual(m.activeMode, 'group');
+  assert.strictEqual(m.solo.plan, '365');
+  assert.deepStrictEqual(m.solo.readDays, { 1: true, 3: true });
+  assert.deepStrictEqual(m.groupRef, { groupId: 'XY', displayName: '용환' });
+});
+
+test('mergeProfile: no cloud -> derive from local solo, activeMode solo', () => {
+  const localSolo = { plan: '180', startDate: '2026-01-01', groupName: 'L', readDays: { 1: true } };
+  const m = SL.mergeProfile(localSolo, null);
+  assert.strictEqual(m.activeMode, 'solo');
+  assert.deepStrictEqual(m.solo.readDays, { 1: true });
+  assert.strictEqual(m.groupRef, null);
+});
+
+test('isProfileSetUp: group with groupRef is set up; empty is not', () => {
+  assert.strictEqual(SL.isProfileSetUp({ activeMode: 'group', groupRef: { groupId: 'X' }, solo: {} }), true);
+  assert.strictEqual(SL.isProfileSetUp({ activeMode: 'solo', groupRef: null, solo: { startDate: '2026-01-01' } }), true);
+  assert.strictEqual(SL.isProfileSetUp({ activeMode: 'solo', groupRef: null, solo: { startDate: null } }), false);
+});
