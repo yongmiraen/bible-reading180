@@ -128,45 +128,65 @@ function isGoogleLinked() {
   return !!(info && !info.isAnonymous && info.googleEmail);
 }
 
-// 혼자 모드 Firestore 구독
+// 구버전(평면) 프로필 문서를 solo 형태로 정규화
+function normalizeFlatSolo(data) {
+  if (!data) return null;
+  if (data.solo) return data.solo;
+  if (data.plan || data.startDate || data.readDays) {
+    return { plan: data.plan, startDate: data.startDate || null, groupName: data.groupName || '', readDays: data.readDays || {} };
+  }
+  return null;
+}
+
+// 혼자 모드 Firestore 구독 (프로필 기반)
 function subscribeSolo() {
   if (soloUnsub) { soloUnsub(); soloUnsub = null; }
   if (!volatile.userId || !isGoogleLinked()) return;
-  soloUnsub = Groups.watchSoloData(volatile.userId, (data) => {
+  soloUnsub = Groups.watchProfile(volatile.userId, (data) => {
     if (!data) return;
     let changed = false;
-    if (data.plan && data.plan !== state.plan) {
-      state.plan = data.plan;
-      applyPlan(data.plan);
-      changed = true;
-    }
-    if (data.startDate && data.startDate !== state.startDate) {
-      state.startDate = data.startDate; changed = true;
-    }
-    if (data.groupName !== undefined && data.groupName !== state.groupName) {
-      state.groupName = data.groupName; changed = true;
-    }
-    if (data.readDays) {
-      const filtered = {};
-      for (const k in data.readDays) {
-        if (data.readDays[k] && +k >= 1 && +k <= TOTAL_DAYS) filtered[k] = true;
-      }
-      if (JSON.stringify(filtered) !== JSON.stringify(state.readDays)) {
-        state.readDays = filtered; changed = true;
-      }
+    if (data.groupRef !== undefined && JSON.stringify(data.groupRef) !== JSON.stringify(state.groupRef)) {
+      state.groupRef = data.groupRef; changed = true;
     }
     if (data.highlights && JSON.stringify(data.highlights) !== JSON.stringify(state.highlights)) {
       state.highlights = data.highlights; changed = true;
     }
+    const cs = normalizeFlatSolo(data);
+    if (cs) {
+      const baseRead = state.mode === 'solo' ? state.readDays : (state.soloStash && state.soloStash.readDays);
+      const mergedRead = window.StateLogic.mergeReadDays(baseRead, cs.readDays);
+      if (state.mode === 'solo') {
+        if (cs.plan && cs.plan !== state.plan) { state.plan = cs.plan; applyPlan(cs.plan); changed = true; }
+        if (cs.startDate && cs.startDate !== state.startDate) { state.startDate = cs.startDate; changed = true; }
+        if (cs.groupName !== undefined && cs.groupName !== state.groupName) { state.groupName = cs.groupName; changed = true; }
+        if (JSON.stringify(mergedRead) !== JSON.stringify(state.readDays)) { state.readDays = mergedRead; changed = true; }
+        state.soloStash = { plan: state.plan, startDate: state.startDate, groupName: state.groupName, readDays: { ...mergedRead } };
+      } else {
+        state.soloStash = { plan: cs.plan, startDate: cs.startDate, groupName: cs.groupName, readDays: mergedRead };
+      }
+    }
     if (changed) { saveState(); render(); }
+    else { saveState(); }
   });
 }
 
-// 혼자 모드 Firestore에 현재 상태 저장
+// 프로필 저장 (혼자 컨텍스트 + 전역 highlights + 메타). 어느 모드에서든 호출 가능.
 function pushSoloData(patch) {
-  if (state.mode !== 'solo' || !isGoogleLinked() || !volatile.userId) return;
-  const data = { plan: state.plan, ...patch };
-  Groups.saveSoloData(volatile.userId, data).catch(e => console.error('solo save:', e));
+  if (!isGoogleLinked() || !volatile.userId) return;
+  patch = patch || {};
+  const profilePatch = { activeMode: state.mode, groupRef: state.groupRef || null };
+  if (patch.highlights !== undefined) profilePatch.highlights = patch.highlights;
+  const soloKeys = ['plan', 'startDate', 'groupName', 'readDays'];
+  const hasSolo = soloKeys.some(k => patch[k] !== undefined);
+  if (hasSolo) {
+    const base = state.mode === 'group'
+      ? (state.soloStash || { plan: '180', startDate: null, groupName: '', readDays: {} })
+      : { plan: state.plan, startDate: state.startDate, groupName: state.groupName, readDays: state.readDays };
+    const solo = { ...base };
+    for (const k of soloKeys) if (patch[k] !== undefined) solo[k] = patch[k];
+    profilePatch.solo = solo;
+  }
+  Groups.saveProfile(volatile.userId, profilePatch);
 }
 
 function loadState() {
@@ -536,6 +556,47 @@ async function init() {
     return;
   }
   volatile.needsLogin = false;
+
+  // 클라우드 프로필 단발 로드 → 마지막 화면/조/혼자 복원 (기기 간)
+  try {
+    const rawCloud = await new Promise((resolve) => {
+      let done = false;
+      const unsub = Groups.watchProfile(volatile.userId, (d) => {
+        if (!done) { done = true; resolve(d); }
+        if (typeof unsub === 'function') unsub();
+      });
+      setTimeout(() => { if (!done) { done = true; resolve(null); } }, 4000);
+    });
+    const merged = window.StateLogic.mergeProfile(state.soloStash, rawCloud);
+    state.soloStash = merged.solo;
+    state.groupRef = state.groupRef || merged.groupRef;
+    if (rawCloud && rawCloud.highlights) state.highlights = rawCloud.highlights;
+
+    const locallySetUp = (state.mode === 'group' && state.groupId) || (state.mode === 'solo' && state.startDate);
+    const cloudActiveMode = rawCloud && rawCloud.activeMode ? rawCloud.activeMode : merged.activeMode;
+    if (!locallySetUp) {
+      // 이 기기엔 세팅 없음 → 클라우드 기준 복원 (없으면 위저드)
+      if (cloudActiveMode === 'group' && state.groupRef && state.groupRef.groupId) {
+        state.mode = 'group';
+        state.groupId = state.groupRef.groupId;
+        state.displayName = state.groupRef.displayName || '';
+      } else if (merged.solo && merged.solo.startDate) {
+        state.mode = 'solo';
+        state.plan = merged.solo.plan;
+        state.startDate = merged.solo.startDate;
+        state.groupName = merged.solo.groupName;
+        state.readDays = { ...(merged.solo.readDays || {}) };
+        applyPlan(state.plan);
+      }
+    } else if (state.mode === 'solo') {
+      // 이미 솔로 세팅됨 → 클라우드 솔로 데이터 병합 반영
+      if (merged.solo.plan) { state.plan = merged.solo.plan; applyPlan(state.plan); }
+      if (merged.solo.startDate) state.startDate = merged.solo.startDate;
+      if (merged.solo.groupName !== undefined) state.groupName = merged.solo.groupName;
+      state.readDays = { ...(merged.solo.readDays || state.readDays) };
+    }
+    saveState();
+  } catch (e) { console.error('profile load', e); }
 
   // 🙏 기도 탭 라우팅 (전역 1회 등록)
   document.addEventListener('click', (e) => {
