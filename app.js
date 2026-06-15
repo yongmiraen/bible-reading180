@@ -495,6 +495,7 @@ function switchToSolo() {
 }
 
 function switchToGroup() {
+  if (soloUnsub) { soloUnsub(); soloUnsub = null; }
   if (state.mode === 'group') return;
   state.soloStash = { plan: state.plan, startDate: state.startDate, groupName: state.groupName, readDays: { ...state.readDays } };
   if (state.groupRef && state.groupRef.groupId) {
@@ -1171,6 +1172,8 @@ function bindCreateForm() {
       logEvent('create_group');
       state.groupId = code;
       state.displayName = displayName;
+      state.groupRef = { groupId: state.groupId, displayName: state.displayName };
+      persistActiveMode();
       state.readDays = {};
       lastInviteCode = code;
       state.view = 'invite-share';
@@ -1220,6 +1223,8 @@ function bindJoinForm(fromLink) {
       state.mode = 'group';
       state.groupId = code;
       state.displayName = displayName;
+      state.groupRef = { groupId: state.groupId, displayName: state.displayName };
+      persistActiveMode();
       pendingInviteCode = null;
       sessionStorage.removeItem('pendingInvite');
       state.view = 'main';
