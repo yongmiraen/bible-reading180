@@ -437,6 +437,58 @@ function subscribeToGroup() {
   );
 }
 
+// === 혼자 ↔ 조 전환 ===
+function persistActiveMode() {
+  if (!volatile.userId || !isGoogleLinked()) return;
+  Groups.saveProfile(volatile.userId, {
+    activeMode: state.mode,
+    groupRef: state.groupRef || null
+  });
+}
+
+function switchToSolo() {
+  if (state.mode === 'solo') return;
+  Groups.unsubscribe();
+  state.groupRef = state.groupId ? { groupId: state.groupId, displayName: state.displayName } : state.groupRef;
+  const s = state.soloStash || { plan: '180', startDate: null, groupName: '', readDays: {} };
+  state.mode = 'solo';
+  state.plan = s.plan || '180';
+  state.startDate = s.startDate || null;
+  state.groupName = s.groupName || '';
+  state.readDays = s.readDays || {};
+  state.groupId = null;
+  state.displayName = '';
+  state.viewDay = null;
+  state.view = 'main';
+  applyPlan(state.plan);
+  saveState();
+  persistActiveMode();
+  subscribeSolo();
+  render();
+}
+
+function switchToGroup() {
+  if (state.mode === 'group') return;
+  state.soloStash = { plan: state.plan, startDate: state.startDate, groupName: state.groupName, readDays: state.readDays };
+  if (state.groupRef && state.groupRef.groupId) {
+    state.mode = 'group';
+    state.groupId = state.groupRef.groupId;
+    state.displayName = state.groupRef.displayName || '';
+    state.viewDay = null;
+    state.view = 'main';
+    saveState();
+    persistActiveMode();
+    subscribeToGroup();
+    render();
+  } else {
+    state.mode = 'group';
+    state.groupId = null;
+    state.view = 'main';
+    saveState();
+    render();
+  }
+}
+
 function exitGroup() {
   Groups.unsubscribe();
   state = defaultState();
@@ -787,6 +839,23 @@ function renderBibleToggle() {
     <div class="bible-toggle-hint">${hint}</div>`;
 }
 
+function renderModeToggle() {
+  if (!isGoogleLinked()) return '';
+  const solo = state.mode === 'solo';
+  return `
+    <div class="mode-toggle">
+      <button class="mode-toggle-btn ${solo?'active':''}" id="toggleSolo">🙂 혼자</button>
+      <button class="mode-toggle-btn ${!solo?'active':''}" id="toggleGroup">👥 조</button>
+    </div>`;
+}
+
+function bindModeToggle() {
+  const s = document.getElementById('toggleSolo');
+  const g = document.getElementById('toggleGroup');
+  if (s) s.onclick = () => switchToSolo();
+  if (g) g.onclick = () => switchToGroup();
+}
+
 function renderHeader() {
   const title = effectiveTitle();
   return `
@@ -801,7 +870,8 @@ function renderHeader() {
         <button class="icon-btn" id="listBtn" title="전체 일정">📅</button>
         <button class="icon-btn" id="settingsBtn" title="설정">⚙️</button>
       </div>
-    </header>`;
+    </header>
+    ${renderModeToggle()}`;
 }
 
 // === 모드 선택 ===
@@ -1254,6 +1324,7 @@ function bindMain() {
       render();
     };
   });
+  bindModeToggle();
 }
 
 async function shareDay() {
@@ -1368,6 +1439,7 @@ function bindList() {
       saveState(); render();
     };
   });
+  bindModeToggle();
 }
 
 function scrollToToday() {
@@ -1406,6 +1478,7 @@ function bindMembers() {
   if (document.getElementById('listBtn')) document.getElementById('listBtn').onclick = () => { state.view = 'list'; saveState(); render(); };
   if (document.getElementById('settingsBtn')) document.getElementById('settingsBtn').onclick = () => { state.view = 'settings'; saveState(); render(); };
   if (document.getElementById('membersBtn')) document.getElementById('membersBtn').onclick = () => {};
+  bindModeToggle();
 }
 
 // === 로그인 게이트 (Google 로그인 강제) ===
@@ -1625,6 +1698,7 @@ function bindPrayer() {
       catch (e) { alert('삭제 실패: ' + (e.message || e)); }
     };
   });
+  bindModeToggle();
 }
 
 // === 건의사항 ===
@@ -1923,6 +1997,7 @@ function bindSettings() {
     volatile.members = [];
     render();
   };
+  bindModeToggle();
 }
 
 // === 형광펜 ===
