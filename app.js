@@ -567,7 +567,12 @@ async function init() {
       });
       setTimeout(() => { if (!done) { done = true; resolve(null); } }, 4000);
     });
-    const merged = window.StateLogic.mergeProfile(state.soloStash, rawCloud);
+    let cloudForMerge = rawCloud;
+    if (rawCloud && !rawCloud.solo) {
+      const flatSolo = normalizeFlatSolo(rawCloud);
+      if (flatSolo) cloudForMerge = Object.assign({}, rawCloud, { solo: flatSolo });
+    }
+    const merged = window.StateLogic.mergeProfile(state.soloStash, cloudForMerge);
     state.soloStash = merged.solo;
     state.groupRef = state.groupRef || merged.groupRef;
     if (rawCloud && rawCloud.highlights) state.highlights = rawCloud.highlights;
