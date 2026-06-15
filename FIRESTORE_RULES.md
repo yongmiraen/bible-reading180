@@ -44,6 +44,10 @@ service cloud.firestore {
         && get(/databases/$(database)/documents/groups/$(groupId)/prayers/$(prayerId)).data.authorUid == request.auth.uid;
     }
 
+    match /users/{userId} {
+      allow read, write: if signedIn() && request.auth.uid == userId;
+    }
+
     match /groups/{groupId} {
       // 초대 코드로 참가할 수 있어야 해서 단일 문서 조회(get)는 허용합니다.
       // 전체 그룹 목록 조회(list)는 막습니다.
@@ -82,7 +86,8 @@ service cloud.firestore {
           && validMemberData()
           && request.resource.data.updatedAt == request.time;
 
-        allow delete: if signedIn() && request.auth.uid == userId;
+        allow delete: if signedIn()
+          && (request.auth.uid == userId || isGroupOwner(groupId));
       }
 
       // 기도제목: 같은 조 조원만 읽기. 작성은 본인 명의로만.

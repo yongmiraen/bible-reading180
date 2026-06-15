@@ -52,6 +52,8 @@ const defaultState = () => ({
   view: 'main',
   bibleView: ['GAE'],   // 선택된 번역 배열 (1~2개). 가능: 'GAE','SAENEW','NIV'
   highlights: {},       // { "창1:3": "yellow", "시23:1": "pink", ... }
+  soloStash: { plan: '180', startDate: null, groupName: '', readDays: {} },
+  groupRef: null,        // { groupId, displayName } | null
 });
 
 // 이전 버전 호환: 문자열이면 배열로 변환
@@ -126,45 +128,65 @@ function isGoogleLinked() {
   return !!(info && !info.isAnonymous && info.googleEmail);
 }
 
-// 혼자 모드 Firestore 구독
+// 구버전(평면) 프로필 문서를 solo 형태로 정규화
+function normalizeFlatSolo(data) {
+  if (!data) return null;
+  if (data.solo) return data.solo;
+  if (data.plan || data.startDate || data.readDays) {
+    return { plan: data.plan, startDate: data.startDate || null, groupName: data.groupName || '', readDays: data.readDays || {} };
+  }
+  return null;
+}
+
+// 혼자 모드 Firestore 구독 (프로필 기반)
 function subscribeSolo() {
   if (soloUnsub) { soloUnsub(); soloUnsub = null; }
   if (!volatile.userId || !isGoogleLinked()) return;
-  soloUnsub = Groups.watchSoloData(volatile.userId, (data) => {
+  soloUnsub = Groups.watchProfile(volatile.userId, (data) => {
     if (!data) return;
     let changed = false;
-    if (data.plan && data.plan !== state.plan) {
-      state.plan = data.plan;
-      applyPlan(data.plan);
-      changed = true;
-    }
-    if (data.startDate && data.startDate !== state.startDate) {
-      state.startDate = data.startDate; changed = true;
-    }
-    if (data.groupName !== undefined && data.groupName !== state.groupName) {
-      state.groupName = data.groupName; changed = true;
-    }
-    if (data.readDays) {
-      const filtered = {};
-      for (const k in data.readDays) {
-        if (data.readDays[k] && +k >= 1 && +k <= TOTAL_DAYS) filtered[k] = true;
-      }
-      if (JSON.stringify(filtered) !== JSON.stringify(state.readDays)) {
-        state.readDays = filtered; changed = true;
-      }
+    if (data.groupRef !== undefined && JSON.stringify(data.groupRef) !== JSON.stringify(state.groupRef)) {
+      state.groupRef = data.groupRef; changed = true;
     }
     if (data.highlights && JSON.stringify(data.highlights) !== JSON.stringify(state.highlights)) {
       state.highlights = data.highlights; changed = true;
     }
+    const cs = normalizeFlatSolo(data);
+    if (cs) {
+      const baseRead = state.mode === 'solo' ? state.readDays : (state.soloStash && state.soloStash.readDays);
+      const mergedRead = window.StateLogic.mergeReadDays(baseRead, cs.readDays);
+      if (state.mode === 'solo') {
+        if (cs.plan && cs.plan !== state.plan) { state.plan = cs.plan; applyPlan(cs.plan); changed = true; }
+        if (cs.startDate && cs.startDate !== state.startDate) { state.startDate = cs.startDate; changed = true; }
+        if (cs.groupName !== undefined && cs.groupName !== state.groupName) { state.groupName = cs.groupName; changed = true; }
+        if (JSON.stringify(mergedRead) !== JSON.stringify(state.readDays)) { state.readDays = mergedRead; changed = true; }
+        state.soloStash = { plan: state.plan, startDate: state.startDate, groupName: state.groupName, readDays: { ...mergedRead } };
+      } else {
+        state.soloStash = { plan: cs.plan, startDate: cs.startDate, groupName: cs.groupName, readDays: mergedRead };
+      }
+    }
     if (changed) { saveState(); render(); }
+    else { saveState(); }
   });
 }
 
-// 혼자 모드 Firestore에 현재 상태 저장
+// 프로필 저장 (혼자 컨텍스트 + 전역 highlights + 메타). 어느 모드에서든 호출 가능.
 function pushSoloData(patch) {
-  if (state.mode !== 'solo' || !isGoogleLinked() || !volatile.userId) return;
-  const data = { plan: state.plan, ...patch };
-  Groups.saveSoloData(volatile.userId, data).catch(e => console.error('solo save:', e));
+  if (!isGoogleLinked() || !volatile.userId) return;
+  patch = patch || {};
+  const profilePatch = { activeMode: state.mode, groupRef: state.groupRef || null };
+  if (patch.highlights !== undefined) profilePatch.highlights = patch.highlights;
+  const soloKeys = ['plan', 'startDate', 'groupName', 'readDays'];
+  const hasSolo = soloKeys.some(k => patch[k] !== undefined);
+  if (hasSolo) {
+    const base = state.mode === 'group'
+      ? (state.soloStash || { plan: '180', startDate: null, groupName: '', readDays: {} })
+      : { plan: state.plan, startDate: state.startDate, groupName: state.groupName, readDays: state.readDays };
+    const solo = { ...base };
+    for (const k of soloKeys) if (patch[k] !== undefined) solo[k] = patch[k];
+    profilePatch.solo = solo;
+  }
+  Groups.saveProfile(volatile.userId, profilePatch);
 }
 
 function loadState() {
@@ -180,6 +202,8 @@ function loadState() {
     } catch (e) {}
   }
   const merged = Object.assign(defaultState(), s || {});
+  const migrated = window.StateLogic.migrateState(merged);
+  Object.assign(merged, migrated);
   merged.bibleView = normalizeBibleView(merged.bibleView);
   if (!merged.plan && merged.mode) merged.plan = '180';
   return merged;
@@ -420,17 +444,78 @@ function subscribeToGroup() {
     (members) => {
       volatile.members = members;
       const me = members.find(m => m.uid === volatile.userId);
-      if (me && me.readDays) {
-        const filtered = {};
-        for (const k in me.readDays) {
-          if (me.readDays[k] && +k >= 1 && +k <= TOTAL_DAYS) filtered[k] = true;
+      if (me) {
+        // 조의 plan을 권위값으로: 들어온 멤버 plan과 다르면 적용
+        if (me.plan && me.plan !== state.plan) {
+          state.plan = me.plan;
+          applyPlan(me.plan);
         }
-        state.readDays = filtered;
+        if (me.readDays) {
+          const filtered = {};
+          for (const k in me.readDays) {
+            if (me.readDays[k] && +k >= 1 && +k <= TOTAL_DAYS) filtered[k] = true;
+          }
+          state.readDays = filtered;
+        }
         saveState();
       }
       render();
     }
   );
+}
+
+// === 혼자 ↔ 조 전환 ===
+function persistActiveMode() {
+  if (!volatile.userId || !isGoogleLinked()) return;
+  Groups.saveProfile(volatile.userId, {
+    activeMode: state.mode,
+    groupRef: state.groupRef || null
+  });
+}
+
+function switchToSolo() {
+  if (state.mode === 'solo') return;
+  Groups.unsubscribe();
+  state.groupRef = state.groupId ? { groupId: state.groupId, displayName: state.displayName } : state.groupRef;
+  const s = state.soloStash || { plan: '180', startDate: null, groupName: '', readDays: {} };
+  state.mode = 'solo';
+  state.plan = s.plan || '180';
+  state.startDate = s.startDate || null;
+  state.groupName = s.groupName || '';
+  state.readDays = { ...(s.readDays || {}) };
+  state.groupId = null;
+  state.displayName = '';
+  state.viewDay = null;
+  state.view = 'main';
+  applyPlan(state.plan);
+  saveState();
+  persistActiveMode();
+  subscribeSolo();
+  render();
+}
+
+function switchToGroup() {
+  if (soloUnsub) { soloUnsub(); soloUnsub = null; }
+  if (state.mode === 'group') return;
+  state.soloStash = { plan: state.plan, startDate: state.startDate, groupName: state.groupName, readDays: { ...state.readDays } };
+  if (state.groupRef && state.groupRef.groupId) {
+    state.mode = 'group';
+    state.groupId = state.groupRef.groupId;
+    state.displayName = state.groupRef.displayName || '';
+    state.readDays = {};
+    state.viewDay = null;
+    state.view = 'main';
+    saveState();
+    persistActiveMode();
+    subscribeToGroup();
+    render();
+  } else {
+    state.mode = 'group';
+    state.groupId = null;
+    state.view = 'main';
+    saveState();
+    render();
+  }
 }
 
 function exitGroup() {
@@ -440,6 +525,26 @@ function exitGroup() {
   volatile.groupData = null;
   volatile.members = [];
   render();
+}
+
+// 중복 조원 정리 (best-effort): 이전 UID의 조원 문서 진도를 내 문서에 병합 후 삭제
+async function reconcileDuplicateMember(oldUid) {
+  try {
+    const code = (state.groupRef && state.groupRef.groupId) || state.groupId;
+    if (!code || !oldUid || !volatile.userId || oldUid === volatile.userId) return;
+    const oldMember = await Groups.getMemberOnce(code, oldUid);
+    if (!oldMember) return;
+    const myMember = await Groups.getMemberOnce(code, volatile.userId);
+    const mergedRead = window.StateLogic.mergeReadDays(
+      myMember ? myMember.readDays : {}, oldMember.readDays
+    );
+    await Groups.setReadDays(code, mergedRead);
+    await Groups.removeMember(code, oldUid);
+    if (volatile.userId) {
+      Groups.saveProfile(volatile.userId, { previousUids: firebase.firestore.FieldValue.arrayUnion(oldUid) });
+    }
+    toast('이전 기록을 정리했어요');
+  } catch (e) { console.warn('reconcile skipped:', e.message || e); }
 }
 
 // === 초기화 ===
@@ -472,6 +577,61 @@ async function init() {
     return;
   }
   volatile.needsLogin = false;
+
+  // 클라우드 프로필 단발 로드 → 마지막 화면/조/혼자 복원 (기기 간)
+  try {
+    const rawCloud = await new Promise((resolve) => {
+      let done = false;
+      const unsub = Groups.watchProfile(volatile.userId, (d) => {
+        if (!done) { done = true; resolve(d); }
+        if (typeof unsub === 'function') unsub();
+      });
+      setTimeout(() => { if (!done) { done = true; resolve(null); } }, 4000);
+    });
+    let cloudForMerge = rawCloud;
+    if (rawCloud && !rawCloud.solo) {
+      const flatSolo = normalizeFlatSolo(rawCloud);
+      if (flatSolo) cloudForMerge = Object.assign({}, rawCloud, { solo: flatSolo });
+    }
+    const merged = window.StateLogic.mergeProfile(state.soloStash, cloudForMerge);
+    state.soloStash = merged.solo;
+    state.groupRef = state.groupRef || merged.groupRef;
+    if (rawCloud && rawCloud.highlights) state.highlights = rawCloud.highlights;
+
+    const locallySetUp = (state.mode === 'group' && state.groupId) || (state.mode === 'solo' && state.startDate);
+    const cloudActiveMode = rawCloud && rawCloud.activeMode ? rawCloud.activeMode : merged.activeMode;
+    if (!locallySetUp) {
+      // 이 기기엔 세팅 없음 → 클라우드 기준 복원 (없으면 위저드)
+      if (cloudActiveMode === 'group' && state.groupRef && state.groupRef.groupId) {
+        state.mode = 'group';
+        state.groupId = state.groupRef.groupId;
+        state.displayName = state.groupRef.displayName || '';
+      } else if (merged.solo && merged.solo.startDate) {
+        state.mode = 'solo';
+        state.plan = merged.solo.plan;
+        state.startDate = merged.solo.startDate;
+        state.groupName = merged.solo.groupName;
+        state.readDays = { ...(merged.solo.readDays || {}) };
+        applyPlan(state.plan);
+      }
+    } else if (state.mode === 'solo') {
+      // 이미 솔로 세팅됨 → 클라우드 솔로 데이터 병합 반영
+      if (merged.solo.plan) { state.plan = merged.solo.plan; applyPlan(state.plan); }
+      if (merged.solo.startDate) state.startDate = merged.solo.startDate;
+      if (merged.solo.groupName !== undefined) state.groupName = merged.solo.groupName;
+      state.readDays = { ...(merged.solo.readDays || state.readDays) };
+    }
+    saveState();
+  } catch (e) { console.error('profile load', e); }
+
+  // 로그인으로 UID가 바뀌었던 경우, 이전 UID의 중복 조원 정리 시도
+  try {
+    const prevUid = sessionStorage.getItem('prevUid');
+    sessionStorage.removeItem('prevUid');
+    if (prevUid && prevUid !== volatile.userId && ((state.groupRef && state.groupRef.groupId) || state.groupId)) {
+      reconcileDuplicateMember(prevUid);
+    }
+  } catch (e) {}
 
   // 🙏 기도 탭 라우팅 (전역 1회 등록)
   document.addEventListener('click', (e) => {
@@ -783,6 +943,23 @@ function renderBibleToggle() {
     <div class="bible-toggle-hint">${hint}</div>`;
 }
 
+function renderModeToggle() {
+  if (!isGoogleLinked()) return '';
+  const solo = state.mode === 'solo';
+  return `
+    <div class="mode-toggle">
+      <button class="mode-toggle-btn ${solo?'active':''}" id="toggleSolo">🙂 혼자</button>
+      <button class="mode-toggle-btn ${!solo?'active':''}" id="toggleGroup">👥 조</button>
+    </div>`;
+}
+
+function bindModeToggle() {
+  const s = document.getElementById('toggleSolo');
+  const g = document.getElementById('toggleGroup');
+  if (s) s.onclick = () => switchToSolo();
+  if (g) g.onclick = () => switchToGroup();
+}
+
 function renderHeader() {
   const title = effectiveTitle();
   return `
@@ -797,7 +974,8 @@ function renderHeader() {
         <button class="icon-btn" id="listBtn" title="전체 일정">📅</button>
         <button class="icon-btn" id="settingsBtn" title="설정">⚙️</button>
       </div>
-    </header>`;
+    </header>
+    ${renderModeToggle()}`;
 }
 
 // === 모드 선택 ===
@@ -994,6 +1172,8 @@ function bindCreateForm() {
       logEvent('create_group');
       state.groupId = code;
       state.displayName = displayName;
+      state.groupRef = { groupId: state.groupId, displayName: state.displayName };
+      persistActiveMode();
       state.readDays = {};
       lastInviteCode = code;
       state.view = 'invite-share';
@@ -1043,6 +1223,8 @@ function bindJoinForm(fromLink) {
       state.mode = 'group';
       state.groupId = code;
       state.displayName = displayName;
+      state.groupRef = { groupId: state.groupId, displayName: state.displayName };
+      persistActiveMode();
       pendingInviteCode = null;
       sessionStorage.removeItem('pendingInvite');
       state.view = 'main';
@@ -1250,6 +1432,7 @@ function bindMain() {
       render();
     };
   });
+  bindModeToggle();
 }
 
 async function shareDay() {
@@ -1364,6 +1547,7 @@ function bindList() {
       saveState(); render();
     };
   });
+  bindModeToggle();
 }
 
 function scrollToToday() {
@@ -1393,6 +1577,16 @@ function renderMembers() {
     <button class="back-btn" id="backBtn">← 돌아가기</button>
     <div class="card members-card">
       <h2 style="margin-top:4px">👥 조원 진도 (${volatile.members.length}명)</h2>
+      ${(() => {
+        const gd = volatile.groupData;
+        if (!gd || state.mode !== 'group') return '';
+        const ownerPresent = volatile.members.some(m => m.uid === gd.owner);
+        if (ownerPresent) return '';
+        return `<div class="orphan-warn">
+          ⚠️ 이 조는 만든 사람의 계정이 사라져 관리가 어려운 상태예요. 새 조를 만들어 초대 링크를 다시 공유하시길 권장합니다.
+          <button class="prayer-mini-btn" id="recreateGroupBtn" style="margin-top:8px">새 조 만들기</button>
+        </div>`;
+      })()}
       ${rows || '<p style="color:var(--muted);text-align:center;padding:20px">조원이 아직 없어요</p>'}
     </div>`;
 }
@@ -1402,6 +1596,9 @@ function bindMembers() {
   if (document.getElementById('listBtn')) document.getElementById('listBtn').onclick = () => { state.view = 'list'; saveState(); render(); };
   if (document.getElementById('settingsBtn')) document.getElementById('settingsBtn').onclick = () => { state.view = 'settings'; saveState(); render(); };
   if (document.getElementById('membersBtn')) document.getElementById('membersBtn').onclick = () => {};
+  const rc = document.getElementById('recreateGroupBtn');
+  if (rc) rc.onclick = () => { state.mode = 'group'; state.groupId = null; state.groupRef = null; state.view = 'group-create'; saveState(); render(); };
+  bindModeToggle();
 }
 
 // === 로그인 게이트 (Google 로그인 강제) ===
@@ -1428,6 +1625,7 @@ function bindLoginGate() {
     btn.disabled = true; btn.textContent = '로그인 중...';
     if (status) status.textContent = '';
     try {
+      try { sessionStorage.setItem('prevUid', Groups.getUserId() || ''); } catch (e) {}
       await Groups.linkOrSignInGoogle();
       // 연결/로그인 후 인증 상태를 새로 읽기 위해 새로고침 → init이 게이트 통과
       location.reload();
@@ -1621,6 +1819,7 @@ function bindPrayer() {
       catch (e) { alert('삭제 실패: ' + (e.message || e)); }
     };
   });
+  bindModeToggle();
 }
 
 // === 건의사항 ===
@@ -1919,6 +2118,7 @@ function bindSettings() {
     volatile.members = [];
     render();
   };
+  bindModeToggle();
 }
 
 // === 형광펜 ===

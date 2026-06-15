@@ -39,6 +39,10 @@ service cloud.firestore {
         && get(/databases/$(database)/documents/groups/$(groupId)/prayers/$(prayerId)).data.authorUid == request.auth.uid;
     }
 
+    match /users/{userId} {
+      allow read, write: if signedIn() && request.auth.uid == userId;
+    }
+
     match /groups/{groupId} {
       allow get: if signedIn();
       allow list: if false;
@@ -72,7 +76,8 @@ service cloud.firestore {
           && validMemberData()
           && request.resource.data.updatedAt == request.time;
 
-        allow delete: if signedIn() && request.auth.uid == userId;
+        allow delete: if signedIn()
+          && (request.auth.uid == userId || isGroupOwner(groupId));
       }
 
       match /prayers/{prayerId} {
