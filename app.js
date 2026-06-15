@@ -1558,6 +1558,8 @@ function scrollToToday() {
 // === 조원 보기 ===
 function renderMembers() {
   const sorted = [...volatile.members].sort((a,b) => countReadDays(b.readDays, memberTotalDays(b)) - countReadDays(a.readDays, memberTotalDays(a)));
+  const iAmOwner = !!(volatile.groupData && volatile.groupData.owner === volatile.userId);
+  const myName = (state.displayName || '').trim();
   const rows = sorted.map(m => {
     const isMe = m.uid === volatile.userId;
     const mTotal = memberTotalDays(m);
@@ -1565,11 +1567,16 @@ function renderMembers() {
     const pct = Math.round(days/mTotal*100);
     const last = relativeTime(m.updatedAt);
     const planTag = mTotal === 365 ? '<span class="plan-tag t365">365</span>' : '<span class="plan-tag t180">180</span>';
+    const isDupOfMe = !isMe && myName !== '' && (m.displayName || '').trim() === myName;
+    let actions = '';
+    if (isDupOfMe) actions += `<button class="prayer-mini-btn" data-act="merge-old" data-uid="${m.uid}">🔁 내 이전 기록 합치기</button>`;
+    else if (iAmOwner && !isMe) actions += `<button class="prayer-mini-btn ghost danger-text" data-act="del-member" data-uid="${m.uid}">삭제</button>`;
     return `<div class="member-row ${isMe?'me':''}">
       <span class="member-name">${escapeHtml(m.displayName || '익명')}${isMe?'<span class="you-tag">나</span>':''}${planTag}</span>
       <span class="member-progress"><b>${days}</b>/${mTotal}일 (${pct}%)</span>
       <span class="member-last-full">마지막 활동 <b>${last}</b></span>
       <div class="member-bar"><div class="member-bar-fill" style="width:${pct}%"></div></div>
+      ${actions ? `<div class="member-actions">${actions}</div>` : ''}
     </div>`;
   }).join('');
   return `
@@ -1591,6 +1598,30 @@ function renderMembers() {
     </div>`;
 }
 
+// 같은 이름의 이전(중복) 계정 진도를 내 계정으로 합치고 정리
+async function mergeOldSelf(oldUid) {
+  const code = state.groupId;
+  const old = volatile.members.find(m => m.uid === oldUid);
+  if (!old || !code) return;
+  const oldDays = countReadDays(old.readDays, memberTotalDays(old));
+  if (!confirm(`이전 계정의 진도(${oldDays}일)를 지금 계정으로 합치고, 이전 항목은 정리할까요?`)) return;
+  try {
+    const merged = window.StateLogic.mergeReadDays(state.readDays, old.readDays);
+    await Groups.setReadDays(code, merged);
+    state.readDays = merged; saveState();
+    try { await Groups.removeMember(code, oldUid); toast('이전 기록을 합치고 정리했어요'); }
+    catch (e) { toast('기록은 합쳤어요. 이전 항목 삭제는 조장만 가능해요'); }
+    render();
+  } catch (e) { alert('합치기 실패: ' + (e.message || e)); }
+}
+
+// 조장: 조원 삭제
+async function ownerRemoveMember(uid) {
+  if (!confirm('이 조원을 목록에서 삭제할까요?')) return;
+  try { await Groups.removeMember(state.groupId, uid); toast('삭제했어요'); }
+  catch (e) { alert('삭제 실패 (조장만 가능): ' + (e.message || e)); }
+}
+
 function bindMembers() {
   document.getElementById('backBtn').onclick = () => { state.view = 'main'; saveState(); render(); };
   if (document.getElementById('listBtn')) document.getElementById('listBtn').onclick = () => { state.view = 'list'; saveState(); render(); };
@@ -1598,6 +1629,12 @@ function bindMembers() {
   if (document.getElementById('membersBtn')) document.getElementById('membersBtn').onclick = () => {};
   const rc = document.getElementById('recreateGroupBtn');
   if (rc) rc.onclick = () => { state.mode = 'group'; state.groupId = null; state.groupRef = null; state.view = 'group-create'; saveState(); render(); };
+  document.querySelectorAll('[data-act="merge-old"]').forEach(b => {
+    b.onclick = () => mergeOldSelf(b.getAttribute('data-uid'));
+  });
+  document.querySelectorAll('[data-act="del-member"]').forEach(b => {
+    b.onclick = () => ownerRemoveMember(b.getAttribute('data-uid'));
+  });
   bindModeToggle();
 }
 
