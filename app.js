@@ -52,6 +52,8 @@ const defaultState = () => ({
   view: 'main',
   bibleView: ['GAE'],   // 선택된 번역 배열 (1~2개). 가능: 'GAE','SAENEW','NIV'
   highlights: {},       // { "창1:3": "yellow", "시23:1": "pink", ... }
+  soloStash: { plan: '180', startDate: null, groupName: '', readDays: {} },
+  groupRef: null,        // { groupId, displayName } | null
 });
 
 // 이전 버전 호환: 문자열이면 배열로 변환
@@ -180,6 +182,8 @@ function loadState() {
     } catch (e) {}
   }
   const merged = Object.assign(defaultState(), s || {});
+  const migrated = window.StateLogic.migrateState(merged);
+  Object.assign(merged, migrated);
   merged.bibleView = normalizeBibleView(merged.bibleView);
   if (!merged.plan && merged.mode) merged.plan = '180';
   return merged;
