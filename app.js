@@ -526,6 +526,26 @@ function exitGroup() {
   render();
 }
 
+// 중복 조원 정리 (best-effort): 이전 UID의 조원 문서 진도를 내 문서에 병합 후 삭제
+async function reconcileDuplicateMember(oldUid) {
+  try {
+    const code = (state.groupRef && state.groupRef.groupId) || state.groupId;
+    if (!code || !oldUid || !volatile.userId || oldUid === volatile.userId) return;
+    const oldMember = await Groups.getMemberOnce(code, oldUid);
+    if (!oldMember) return;
+    const myMember = await Groups.getMemberOnce(code, volatile.userId);
+    const mergedRead = window.StateLogic.mergeReadDays(
+      myMember ? myMember.readDays : {}, oldMember.readDays
+    );
+    await Groups.setReadDays(code, mergedRead);
+    await Groups.removeMember(code, oldUid);
+    if (volatile.userId) {
+      Groups.saveProfile(volatile.userId, { previousUids: firebase.firestore.FieldValue.arrayUnion(oldUid) });
+    }
+    toast('이전 기록을 정리했어요');
+  } catch (e) { console.warn('reconcile skipped:', e.message || e); }
+}
+
 // === 초기화 ===
 async function init() {
   const params = new URLSearchParams(location.search);
@@ -602,6 +622,15 @@ async function init() {
     }
     saveState();
   } catch (e) { console.error('profile load', e); }
+
+  // 로그인으로 UID가 바뀌었던 경우, 이전 UID의 중복 조원 정리 시도
+  try {
+    const prevUid = sessionStorage.getItem('prevUid');
+    sessionStorage.removeItem('prevUid');
+    if (prevUid && prevUid !== volatile.userId && ((state.groupRef && state.groupRef.groupId) || state.groupId)) {
+      reconcileDuplicateMember(prevUid);
+    }
+  } catch (e) {}
 
   // 🙏 기도 탭 라우팅 (전역 1회 등록)
   document.addEventListener('click', (e) => {
@@ -1543,6 +1572,16 @@ function renderMembers() {
     <button class="back-btn" id="backBtn">← 돌아가기</button>
     <div class="card members-card">
       <h2 style="margin-top:4px">👥 조원 진도 (${volatile.members.length}명)</h2>
+      ${(() => {
+        const gd = volatile.groupData;
+        if (!gd || state.mode !== 'group') return '';
+        const ownerPresent = volatile.members.some(m => m.uid === gd.owner);
+        if (ownerPresent) return '';
+        return `<div class="orphan-warn">
+          ⚠️ 이 조는 만든 사람의 계정이 사라져 관리가 어려운 상태예요. 새 조를 만들어 초대 링크를 다시 공유하시길 권장합니다.
+          <button class="prayer-mini-btn" id="recreateGroupBtn" style="margin-top:8px">새 조 만들기</button>
+        </div>`;
+      })()}
       ${rows || '<p style="color:var(--muted);text-align:center;padding:20px">조원이 아직 없어요</p>'}
     </div>`;
 }
@@ -1552,6 +1591,8 @@ function bindMembers() {
   if (document.getElementById('listBtn')) document.getElementById('listBtn').onclick = () => { state.view = 'list'; saveState(); render(); };
   if (document.getElementById('settingsBtn')) document.getElementById('settingsBtn').onclick = () => { state.view = 'settings'; saveState(); render(); };
   if (document.getElementById('membersBtn')) document.getElementById('membersBtn').onclick = () => {};
+  const rc = document.getElementById('recreateGroupBtn');
+  if (rc) rc.onclick = () => { state.mode = 'group'; state.groupId = null; state.groupRef = null; state.view = 'group-create'; saveState(); render(); };
   bindModeToggle();
 }
 
@@ -1579,6 +1620,7 @@ function bindLoginGate() {
     btn.disabled = true; btn.textContent = '로그인 중...';
     if (status) status.textContent = '';
     try {
+      try { sessionStorage.setItem('prevUid', Groups.getUserId() || ''); } catch (e) {}
       await Groups.linkOrSignInGoogle();
       // 연결/로그인 후 인증 상태를 새로 읽기 위해 새로고침 → init이 게이트 통과
       location.reload();
