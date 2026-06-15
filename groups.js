@@ -280,6 +280,28 @@
     }
   }
 
+  // 사용자 프로필(혼자 컨텍스트 + 조 포인터 + 메타) — users/{uid}
+  function watchProfile(uid, cb) {
+    return db.collection('users').doc(uid).onSnapshot(
+      snap => cb(snap.exists ? snap.data() : null),
+      err => console.error('profile sync error:', err)
+    );
+  }
+  async function saveProfile(uid, patch) {
+    const ref = db.collection('users').doc(uid);
+    const payload = { ...patch, updatedAt: firebase.firestore.FieldValue.serverTimestamp() };
+    try { await ref.set(payload, { merge: true }); }
+    catch (e) { console.error('profile save:', e); }
+  }
+  async function getMemberOnce(code, uid) {
+    const snap = await db.collection('groups').doc(code).collection('members').doc(uid).get();
+    return snap.exists ? snap.data() : null;
+  }
+  async function removeMember(code, uid) {
+    await ensureSignedIn();
+    await db.collection('groups').doc(code).collection('members').doc(uid).delete();
+  }
+
   function getUserId() {
     return currentUser ? currentUser.uid : null;
   }
@@ -352,5 +374,9 @@
     signOutToAnonymous,
     watchSoloData,
     saveSoloData,
+    watchProfile,
+    saveProfile,
+    getMemberOnce,
+    removeMember,
   };
 })();
