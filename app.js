@@ -424,12 +424,19 @@ function subscribeToGroup() {
     (members) => {
       volatile.members = members;
       const me = members.find(m => m.uid === volatile.userId);
-      if (me && me.readDays) {
-        const filtered = {};
-        for (const k in me.readDays) {
-          if (me.readDays[k] && +k >= 1 && +k <= TOTAL_DAYS) filtered[k] = true;
+      if (me) {
+        // 조의 plan을 권위값으로: 들어온 멤버 plan과 다르면 적용
+        if (me.plan && me.plan !== state.plan) {
+          state.plan = me.plan;
+          applyPlan(me.plan);
         }
-        state.readDays = filtered;
+        if (me.readDays) {
+          const filtered = {};
+          for (const k in me.readDays) {
+            if (me.readDays[k] && +k >= 1 && +k <= TOTAL_DAYS) filtered[k] = true;
+          }
+          state.readDays = filtered;
+        }
         saveState();
       }
       render();
@@ -455,7 +462,7 @@ function switchToSolo() {
   state.plan = s.plan || '180';
   state.startDate = s.startDate || null;
   state.groupName = s.groupName || '';
-  state.readDays = s.readDays || {};
+  state.readDays = { ...(s.readDays || {}) };
   state.groupId = null;
   state.displayName = '';
   state.viewDay = null;
@@ -469,11 +476,12 @@ function switchToSolo() {
 
 function switchToGroup() {
   if (state.mode === 'group') return;
-  state.soloStash = { plan: state.plan, startDate: state.startDate, groupName: state.groupName, readDays: state.readDays };
+  state.soloStash = { plan: state.plan, startDate: state.startDate, groupName: state.groupName, readDays: { ...state.readDays } };
   if (state.groupRef && state.groupRef.groupId) {
     state.mode = 'group';
     state.groupId = state.groupRef.groupId;
     state.displayName = state.groupRef.displayName || '';
+    state.readDays = {};
     state.viewDay = null;
     state.view = 'main';
     saveState();
