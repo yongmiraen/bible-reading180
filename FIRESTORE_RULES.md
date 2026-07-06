@@ -68,8 +68,10 @@ service cloud.firestore {
       allow delete: if isGroupOwner(groupId);
 
       match /members/{userId} {
-        // 조원 목록/진도는 같은 조에 참가한 사람만 볼 수 있습니다.
-        allow get, list: if isGroupMember(groupId);
+        // 참가(join) 시 본인 문서 존재 확인을 위해, 본인 문서는 조원이 아니어도 읽기 허용.
+        // 목록(list)과 타인 문서 조회는 조원만 가능.
+        allow get: if signedIn() && (request.auth.uid == userId || isGroupMember(groupId));
+        allow list: if isGroupMember(groupId);
 
         // 본인 멤버 문서만 만들거나 수정할 수 있습니다.
         allow create: if signedIn()
