@@ -2238,21 +2238,29 @@ function bindSettings() {
     if (ref) openMemoEditor(ref);
   });
 
+  // 드래그 선택(데스크톱) — 비접힘 선택이면 선택 위치에 툴바. 접힘이면 닫지 않음(탭 처리와 충돌 방지)
   document.addEventListener('selectionchange', () => {
     const sel = window.getSelection();
-    if (!sel || sel.isCollapsed || !sel.rangeCount) { hideToolbar(); return; }
+    if (!sel || sel.isCollapsed || !sel.rangeCount) return;
     const range = sel.getRangeAt(0);
     const verseEl = findVerseEl(range.startContainer) || findVerseEl(range.endContainer);
-    if (!verseEl) { hideToolbar(); return; }
+    if (!verseEl) return;
     _targetRef = verseEl.dataset.ref;
-    const rect = range.getBoundingClientRect();
-    showToolbar(rect);
+    showToolbar(range.getBoundingClientRect());
   });
 
+  // 절 탭/클릭 → 그 절 기준 툴바(탭 지점 근처). 바깥/그 외 탭 → 닫기.
   document.addEventListener('click', (e) => {
     if (toolbar.contains(e.target)) return;
+    if (e.target.closest && e.target.closest('.verse-memo-badge')) return; // 메모 뱃지는 메모 모듈이 처리
     const sel = window.getSelection();
-    if (sel && !sel.isCollapsed) return;
+    if (sel && !sel.isCollapsed) return; // 활성 선택 중이면 선택 툴바에 맡김
+    const verseEl = findVerseEl(e.target);
+    if (verseEl) {
+      _targetRef = verseEl.dataset.ref;
+      showToolbar({ left: e.clientX, right: e.clientX, top: e.clientY, bottom: e.clientY, width: 0, height: 0 });
+      return;
+    }
     hideToolbar();
   });
 
