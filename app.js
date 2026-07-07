@@ -52,6 +52,7 @@ const defaultState = () => ({
   view: 'main',
   bibleView: ['GAE'],   // 선택된 번역 배열 (1~2개). 가능: 'GAE','SAENEW','NIV'
   highlights: {},       // { "창1:3": "yellow", "시23:1": "pink", ... }
+  memos: {},            // { "창4:2": "메모 텍스트", ... } — 개인용, 전역
   soloStash: { plan: '180', startDate: null, groupName: '', readDays: {} },
   groupRef: null,        // { groupId, displayName } | null
 });
@@ -151,6 +152,9 @@ function subscribeSolo() {
     if (data.highlights && JSON.stringify(data.highlights) !== JSON.stringify(state.highlights)) {
       state.highlights = data.highlights; changed = true;
     }
+    if (data.memos && JSON.stringify(data.memos) !== JSON.stringify(state.memos)) {
+      state.memos = data.memos; changed = true;
+    }
     const cs = normalizeFlatSolo(data);
     if (cs) {
       const baseRead = state.mode === 'solo' ? state.readDays : (state.soloStash && state.soloStash.readDays);
@@ -176,6 +180,7 @@ function pushSoloData(patch) {
   patch = patch || {};
   const profilePatch = { activeMode: state.mode, groupRef: state.groupRef || null };
   if (patch.highlights !== undefined) profilePatch.highlights = patch.highlights;
+  if (patch.memos !== undefined) profilePatch.memos = patch.memos;
   const soloKeys = ['plan', 'startDate', 'groupName', 'readDays'];
   const hasSolo = soloKeys.some(k => patch[k] !== undefined);
   if (hasSolo) {
@@ -322,12 +327,16 @@ function renderRangesHTML(ranges) {
           if (!text) return '';
           return `<p class="ver-line ${ver.toLowerCase()}"><span class="ver-tag">${VERSION_TAG[ver]}</span>${escapeHtml(text)}</p>`;
         }).filter(Boolean).join('');
-        const hlC = state.highlights[`${b}${ch}:${v}`];
-        chBuf.push(`<div class="verse-compare" data-ref="${b}${ch}:${v}"${hlC?` data-hl="${hlC}"`:``}><span class="vnum">${v}</span>${verseLines}</div>`);
+        const refC = `${b}${ch}:${v}`;
+        const hlC = state.highlights[refC];
+        const memoC = state.memos[refC] ? `<button class="verse-memo-badge" data-ref="${refC}" title="메모 보기">📝</button>` : '';
+        chBuf.push(`<div class="verse-compare" data-ref="${refC}"${hlC?` data-hl="${hlC}"`:``}><span class="vnum">${v}</span>${verseLines}${memoC}</div>`);
       } else {
         const text = d[view[0]] || d.GAE;
-        const hlS = state.highlights[`${b}${ch}:${v}`];
-        chBuf.push(`<p class="verse" data-ref="${b}${ch}:${v}"${hlS?` data-hl="${hlS}"`:``}><span class="vnum">${v}</span>${escapeHtml(text)}</p>`);
+        const refS = `${b}${ch}:${v}`;
+        const hlS = state.highlights[refS];
+        const memoS = state.memos[refS] ? `<button class="verse-memo-badge" data-ref="${refS}" title="메모 보기">📝</button>` : '';
+        chBuf.push(`<p class="verse" data-ref="${refS}"${hlS?` data-hl="${hlS}"`:``}><span class="vnum">${v}</span>${escapeHtml(text)}${memoS}</p>`);
       }
     });
     if (chBuf.length) parts.push(`<div class="chapter"><h4 class="ch-title">${chHeader}</h4>${chBuf.join('')}</div>`);
@@ -597,6 +606,7 @@ async function init() {
     state.soloStash = merged.solo;
     state.groupRef = state.groupRef || merged.groupRef;
     if (rawCloud && rawCloud.highlights) state.highlights = rawCloud.highlights;
+    if (rawCloud && rawCloud.memos) state.memos = rawCloud.memos;
 
     const locallySetUp = (state.mode === 'group' && state.groupId) || (state.mode === 'solo' && state.startDate);
     const cloudActiveMode = rawCloud && rawCloud.activeMode ? rawCloud.activeMode : merged.activeMode;
@@ -2218,6 +2228,16 @@ function bindSettings() {
     });
   });
 
+  const memoBtn = toolbar.querySelector('.hl-memo-btn');
+  if (memoBtn) memoBtn.addEventListener('click', (e) => {
+    e.preventDefault();
+    e.stopPropagation();
+    const ref = _targetRef;
+    hideToolbar();
+    window.getSelection().removeAllRanges();
+    if (ref) openMemoEditor(ref);
+  });
+
   document.addEventListener('selectionchange', () => {
     const sel = window.getSelection();
     if (!sel || sel.isCollapsed || !sel.rangeCount) { hideToolbar(); return; }
@@ -2237,4 +2257,65 @@ function bindSettings() {
   });
 
   document.addEventListener('scroll', hideToolbar, true);
+})();
+
+// === 메모 에디터 ===
+function memoRefLabel(ref) {
+  // "창4:2" -> "창 4:2"
+  return String(ref).replace(/^(\D+)/, '$1 ');
+}
+
+function openMemoEditor(ref) {
+  const modal = document.getElementById('memo-modal');
+  const ta = document.getElementById('memo-text');
+  if (!modal || !ta || !ref) return;
+  modal.dataset.ref = ref;
+  const refEl = document.getElementById('memo-ref');
+  if (refEl) refEl.textContent = memoRefLabel(ref);
+  ta.value = state.memos[ref] || '';
+  const delBtn = document.getElementById('memo-del');
+  if (delBtn) delBtn.style.display = state.memos[ref] ? '' : 'none';
+  modal.classList.add('show');
+  setTimeout(() => ta.focus(), 50);
+}
+
+(function initMemo() {
+  const modal = document.getElementById('memo-modal');
+  if (!modal) return;
+  const ta = document.getElementById('memo-text');
+
+  function close() { modal.classList.remove('show'); modal.dataset.ref = ''; }
+
+  function saveMemo(ref, text) {
+    if (text) state.memos[ref] = text;
+    else delete state.memos[ref];
+    saveState();
+    pushSoloData({ memos: state.memos });
+    close();
+    render();
+  }
+
+  const saveBtn = document.getElementById('memo-save');
+  if (saveBtn) saveBtn.onclick = () => {
+    const ref = modal.dataset.ref;
+    if (!ref) return;
+    saveMemo(ref, ta.value.trim());
+  };
+  const delBtn = document.getElementById('memo-del');
+  if (delBtn) delBtn.onclick = () => {
+    const ref = modal.dataset.ref;
+    if (!ref) return;
+    saveMemo(ref, '');
+  };
+  const cancelBtn = document.getElementById('memo-cancel');
+  if (cancelBtn) cancelBtn.onclick = close;
+
+  // 카드 바깥 클릭 시 닫기
+  modal.addEventListener('click', (e) => { if (e.target === modal) close(); });
+
+  // 메모 뱃지 클릭(위임) → 편집창 열기
+  document.addEventListener('click', (e) => {
+    const badge = e.target.closest && e.target.closest('.verse-memo-badge');
+    if (badge) { e.preventDefault(); e.stopPropagation(); openMemoEditor(badge.dataset.ref); }
+  });
 })();
