@@ -277,6 +277,35 @@ header h1{font-size:1.15rem;margin:0;font-weight:700;letter-spacing:-.5px}
   font-size:.75rem;display:flex;align-items:center;justify-content:center;color:var(--muted);
 }
 .hl-btn.hl-remove:hover{border-color:var(--bad);color:var(--bad)}
+.hl-memo-btn{
+  width:32px;height:32px;border-radius:50%;border:1.5px solid var(--line);
+  background:#fff;cursor:pointer;transition:.15s;
+  font-size:.95rem;display:flex;align-items:center;justify-content:center;
+}
+.hl-memo-btn:hover{transform:scale(1.15);border-color:var(--accent)}
+.verse-memo-badge{
+  display:inline-flex;align-items:center;margin-left:6px;padding:0 2px;
+  font-size:.8rem;background:none;border:none;cursor:pointer;vertical-align:baseline;
+}
+#memo-modal{
+  display:none;position:fixed;inset:0;z-index:210;
+  background:rgba(0,0,0,.4);align-items:center;justify-content:center;padding:20px;
+}
+#memo-modal.show{display:flex}
+.memo-card{
+  background:#fff;width:100%;max-width:420px;border-radius:16px;padding:18px;
+  box-shadow:0 8px 30px rgba(0,0,0,.2);
+}
+.memo-ref{font-weight:700;color:var(--accent);margin-bottom:8px}
+#memo-text{
+  width:100%;font-family:inherit;font-size:16px;padding:.7em .9em;
+  border:1.5px solid var(--line);border-radius:10px;background:#fff;color:var(--text);
+  resize:vertical;box-sizing:border-box;
+}
+.memo-actions{display:flex;gap:8px;margin-top:12px;align-items:center}
+.memo-actions .primary{width:auto;flex:1;margin-top:0;padding:12px}
+.memo-del{color:var(--bad);font-size:.9rem;padding:8px 12px}
+.memo-cancel{color:var(--muted);font-size:.9rem;padding:8px 12px}
 
 .check.checked{
   background:var(--good);color:#fff;border-color:var(--good);
@@ -501,6 +530,19 @@ header h1{font-size:1.15rem;margin:0;font-weight:700;letter-spacing:-.5px}
     <button class="hl-btn" data-color="pink"></button>
     <button class="hl-btn" data-color="blue"></button>
     <button class="hl-btn hl-remove" data-color="">✕</button>
+    <button class="hl-memo-btn" title="메모">📝</button>
+  </div>
+
+  <div id="memo-modal">
+    <div class="memo-card">
+      <div class="memo-ref" id="memo-ref"></div>
+      <textarea id="memo-text" maxlength="1000" rows="5" placeholder="이 절에 대한 메모를 남겨보세요 (나만 봅니다)"></textarea>
+      <div class="memo-actions">
+        <button class="primary" id="memo-save">저장</button>
+        <button class="memo-del" id="memo-del">삭제</button>
+        <button class="memo-cancel" id="memo-cancel">취소</button>
+      </div>
+    </div>
   </div>
 
   <script src="https://www.gstatic.com/firebasejs/10.13.2/firebase-app-compat.js"></script>
