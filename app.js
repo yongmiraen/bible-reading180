@@ -52,6 +52,7 @@ const defaultState = () => ({
   view: 'main',
   bibleView: ['GAE'],   // 선택된 번역 배열 (1~2개). 가능: 'GAE','SAENEW','NIV'
   highlights: {},       // { "창1:3": "yellow", "시23:1": "pink", ... }
+  memos: {},            // { "창4:2": "메모 텍스트", ... } — 개인용, 전역
   soloStash: { plan: '180', startDate: null, groupName: '', readDays: {} },
   groupRef: null,        // { groupId, displayName } | null
 });
@@ -151,6 +152,9 @@ function subscribeSolo() {
     if (data.highlights && JSON.stringify(data.highlights) !== JSON.stringify(state.highlights)) {
       state.highlights = data.highlights; changed = true;
     }
+    if (data.memos && JSON.stringify(data.memos) !== JSON.stringify(state.memos)) {
+      state.memos = data.memos; changed = true;
+    }
     const cs = normalizeFlatSolo(data);
     if (cs) {
       const baseRead = state.mode === 'solo' ? state.readDays : (state.soloStash && state.soloStash.readDays);
@@ -176,6 +180,7 @@ function pushSoloData(patch) {
   patch = patch || {};
   const profilePatch = { activeMode: state.mode, groupRef: state.groupRef || null };
   if (patch.highlights !== undefined) profilePatch.highlights = patch.highlights;
+  if (patch.memos !== undefined) profilePatch.memos = patch.memos;
   const soloKeys = ['plan', 'startDate', 'groupName', 'readDays'];
   const hasSolo = soloKeys.some(k => patch[k] !== undefined);
   if (hasSolo) {
@@ -597,6 +602,7 @@ async function init() {
     state.soloStash = merged.solo;
     state.groupRef = state.groupRef || merged.groupRef;
     if (rawCloud && rawCloud.highlights) state.highlights = rawCloud.highlights;
+    if (rawCloud && rawCloud.memos) state.memos = rawCloud.memos;
 
     const locallySetUp = (state.mode === 'group' && state.groupId) || (state.mode === 'solo' && state.startDate);
     const cloudActiveMode = rawCloud && rawCloud.activeMode ? rawCloud.activeMode : merged.activeMode;
