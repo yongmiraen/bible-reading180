@@ -667,6 +667,18 @@ async function init() {
 window.addEventListener('DOMContentLoaded', init);
 
 // === 라우터 ===
+// 지금 그리는 화면의 식별자. 같으면 "같은 화면을 다시 그리는 것"으로 본다.
+function currentPageKey() {
+  return [
+    volatile.needsLogin ? 'login' : (state.view || 'main'),
+    state.mode || '',
+    state.groupId || '',
+    state.plan || '',
+    state.viewDay == null ? '' : state.viewDay,
+  ].join('|');
+}
+let _lastPageKey = null;
+
 function render() {
   const app = document.getElementById('app');
 
@@ -674,6 +686,12 @@ function render() {
     app.innerHTML = '<div class="setup"><h1>📖 성경 통독</h1><p class="lead">불러오는 중...</p></div>';
     return;
   }
+
+  // 클라우드 동기화 등으로 같은 화면을 다시 그릴 때는 읽던 위치를 유지한다.
+  const pageKey = currentPageKey();
+  const samePage = pageKey === _lastPageKey;
+  const prevScrollY = window.scrollY;
+  _lastPageKey = pageKey;
 
   if (volatile.needsLogin) {
     app.innerHTML = renderLoginGate();
@@ -760,7 +778,8 @@ function render() {
 
   app.innerHTML = renderMain();
   bindMain();
-  window.scrollTo(0, 0);
+  if (samePage) window.scrollTo(0, prevScrollY);
+  else window.scrollTo(0, 0);
 }
 
 // === 헤더 ===
@@ -2172,14 +2191,38 @@ function bindSettings() {
 (function initHighlighter() {
   const toolbar = document.getElementById('hl-toolbar');
   if (!toolbar) return;
-  let _targetRef = null;
+  const VERSE_SEL = '.verse[data-ref], .verse-compare[data-ref]';
+  let _targetRefs = [];
+
+  function verseEl(ref) {
+    return document.querySelector(`.verse[data-ref="${ref}"], .verse-compare[data-ref="${ref}"]`);
+  }
 
   function findVerseEl(node) {
     while (node && node !== document.body) {
-      if (node.dataset && node.dataset.ref) return node;
-      node = node.parentElement;
+      if (node.nodeType === 1 && node.matches && node.matches(VERSE_SEL)) return node;
+      node = node.parentNode;
     }
     return null;
+  }
+
+  // 선택 영역이 실제 글자를 걸친 절만 모은다.
+  // (드래그 끝이 다음 절 첫머리에만 닿은 경우는 제외)
+  function versesInRange(range) {
+    const refs = [];
+    document.querySelectorAll(VERSE_SEL).forEach(el => {
+      if (!range.intersectsNode(el)) return;
+      const clip = document.createRange();
+      clip.selectNodeContents(el);
+      if (clip.compareBoundaryPoints(Range.START_TO_START, range) < 0) {
+        clip.setStart(range.startContainer, range.startOffset);
+      }
+      if (clip.compareBoundaryPoints(Range.END_TO_END, range) > 0) {
+        clip.setEnd(range.endContainer, range.endOffset);
+      }
+      if (clip.toString().trim()) refs.push(el.dataset.ref);
+    });
+    return refs;
   }
 
   function showToolbar(rect) {
@@ -2196,25 +2239,24 @@ function bindSettings() {
 
   function hideToolbar() {
     toolbar.classList.remove('show');
-    _targetRef = null;
+    _targetRefs = [];
   }
 
   function applyHighlight(color) {
-    if (!_targetRef) return;
-    if (color) {
-      state.highlights[_targetRef] = color;
-    } else {
-      delete state.highlights[_targetRef];
+    if (!_targetRefs.length) return;
+    for (const ref of _targetRefs) {
+      if (color) state.highlights[ref] = color;
+      else delete state.highlights[ref];
+      const el = verseEl(ref);
+      if (el) {
+        if (color) el.setAttribute('data-hl', color);
+        else el.removeAttribute('data-hl');
+      }
     }
     saveState();
     pushSoloData({ highlights: state.highlights });
     if (state.mode === 'group' && state.groupId) {
       Groups.setReadDays(state.groupId, state.readDays).catch(() => {});
-    }
-    const el = document.querySelector(`[data-ref="${_targetRef}"]`);
-    if (el) {
-      if (color) el.setAttribute('data-hl', color);
-      else el.removeAttribute('data-hl');
     }
     hideToolbar();
     window.getSelection().removeAllRanges();
@@ -2232,7 +2274,7 @@ function bindSettings() {
   if (memoBtn) memoBtn.addEventListener('click', (e) => {
     e.preventDefault();
     e.stopPropagation();
-    const ref = _targetRef;
+    const ref = _targetRefs[0]; // 메모는 절 단위 — 선택한 첫 절에 단다
     hideToolbar();
     window.getSelection().removeAllRanges();
     if (ref) openMemoEditor(ref);
@@ -2243,9 +2285,9 @@ function bindSettings() {
     const sel = window.getSelection();
     if (!sel || sel.isCollapsed || !sel.rangeCount) return;
     const range = sel.getRangeAt(0);
-    const verseEl = findVerseEl(range.startContainer) || findVerseEl(range.endContainer);
-    if (!verseEl) return;
-    _targetRef = verseEl.dataset.ref;
+    const refs = versesInRange(range);
+    if (!refs.length) return;
+    _targetRefs = refs;
     showToolbar(range.getBoundingClientRect());
   });
 
@@ -2255,9 +2297,9 @@ function bindSettings() {
     if (e.target.closest && e.target.closest('.verse-memo-badge')) return; // 메모 뱃지는 메모 모듈이 처리
     const sel = window.getSelection();
     if (sel && !sel.isCollapsed) return; // 활성 선택 중이면 선택 툴바에 맡김
-    const verseEl = findVerseEl(e.target);
-    if (verseEl) {
-      _targetRef = verseEl.dataset.ref;
+    const el = findVerseEl(e.target);
+    if (el) {
+      _targetRefs = [el.dataset.ref];
       showToolbar({ left: e.clientX, right: e.clientX, top: e.clientY, bottom: e.clientY, width: 0, height: 0 });
       return;
     }

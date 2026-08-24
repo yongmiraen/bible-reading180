@@ -1,0 +1,63 @@
+<!doctype html>
+<html lang="ko">
+<head>
+<meta charset="utf-8">
+<title>highlight fixture</title>
+<style>
+  body { margin: 0; }
+  #hl-toolbar { display: none; position: fixed; z-index: 150; background: #fff; padding: 6px 8px; }
+  #hl-toolbar.show { display: flex; }
+  .hl-btn, .hl-memo-btn { width: 32px; height: 32px; }
+  #memo-modal { display: none; }
+  #memo-modal.show { display: block; }
+</style>
+</head>
+<body>
+  <div id="app"></div>
+
+  <div id="hl-toolbar">
+    <button class="hl-btn" data-color="yellow"></button>
+    <button class="hl-btn" data-color="green"></button>
+    <button class="hl-btn" data-color="pink"></button>
+    <button class="hl-btn" data-color="blue"></button>
+    <button class="hl-btn hl-remove" data-color="">✕</button>
+    <button class="hl-memo-btn" title="메모">📝</button>
+  </div>
+
+  <div id="memo-modal">
+    <span id="memo-ref"></span>
+    <textarea id="memo-text"></textarea>
+    <button id="memo-save"></button>
+    <button id="memo-del"></button>
+    <button id="memo-cancel"></button>
+  </div>
+
+  <script>
+    // app.js가 기대하는 전역 데이터/모듈의 최소 스텁 (Firebase 없이 구동)
+    window.BIBLE = {};
+    window.BIBLES = {};
+    window.SCHEDULE = [];
+    window.BOOK_NAMES = {};
+    window.DRAMA_BIBLE = {};
+    window.Groups = {
+      getUserInfo: () => null,
+      saveProfile: () => {},
+      setReadDays: () => Promise.resolve(),
+      watchProfile: () => (() => {}),
+      subscribeGroup: () => {},
+      unsubscribe: () => {},
+    };
+  </script>
+  <script src="../../lib/state-logic.js"></script>
+  <script>
+    // app.js는 DOMContentLoaded 이후에 주입한다.
+    // (그래야 Firebase가 필요한 init()이 실행되지 않는다)
+    window.addEventListener('DOMContentLoaded', () => {
+      const s = document.createElement('script');
+      s.src = '../../app.js';
+      s.onload = () => { window.__appLoaded = true; };
+      document.body.appendChild(s);
+    });
+  </script>
+</body>
+</html>
