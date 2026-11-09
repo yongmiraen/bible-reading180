@@ -290,7 +290,10 @@
   async function saveProfile(uid, patch) {
     const ref = db.collection('users').doc(uid);
     const payload = { ...patch, updatedAt: firebase.firestore.FieldValue.serverTimestamp() };
-    try { await ref.set(payload, { merge: true }); }
+    // merge:true는 중첩 맵(highlights, memos, solo.readDays)을 깊게 병합해서
+    // 로컬에서 지운 키가 클라우드에 남고 → 스냅샷으로 되살아난다.
+    // mergeFields: 보낸 최상위 필드만 "통째로 교체", 나머지 필드는 그대로 둔다.
+    try { await ref.set(payload, { mergeFields: Object.keys(payload) }); }
     catch (e) { console.error('profile save:', e); }
   }
   async function getMemberOnce(code, uid) {
