@@ -169,7 +169,7 @@ function subscribeSolo() {
         state.soloStash = { plan: cs.plan, startDate: cs.startDate, groupName: cs.groupName, readDays: mergedRead };
       }
     }
-    if (changed) { saveState(); render(); }
+    if (changed) { saveState(); renderFromSync(); }
     else { saveState(); }
   });
 }
@@ -263,13 +263,19 @@ function eachVerseInRange(range, cb) {
     else if (ch === sc) { s = sv; e = chapterMax(book, ch); }
     else if (ch === ec) { s = 1; e = ev || chapterMax(book, ch); }
     else { s = 1; e = chapterMax(book, ch); }
+    const known = chapterMax(book, ch);
     if (!e) e = 200;
     for (let v = s; v <= e; v++) {
       const key = `${book}${ch}:${v}`;
-      const gae = dicts.GAE[key];
-      if (!gae) break;
+      let gae = (dicts.GAE[key] || '').trim();
+      if (!gae) {
+        // 장 끝을 넘었으면 종료. 장 중간에 빠진 절(예: 행24:7, 계12:18)은
+        // 데이터 관례(마17:21 등)대로 "(없음)"으로 표시하고 계속 진행한다.
+        if (!known || v > known) break;
+        gae = '(없음)';
+      }
       cb(book, ch, v, {
-        GAE: gae.trim(),
+        GAE: gae,
         SAENEW: (dicts.SAENEW[key] || '').trim(),
         NIV: (dicts.NIV[key] || '').trim(),
         ESV: (dicts.ESV[key] || '').trim(),
@@ -435,6 +441,8 @@ function toggleRead(day) {
   } else if (state.mode === 'solo') {
     pushSoloData({ readDays: state.readDays });
   }
+  // 버튼·진도바를 즉시 갱신 (혼자 모드는 동기화 스냅샷이 변경 없음으로 판단해 다시 그리지 않음)
+  render();
 }
 
 // === 그룹 구독 ===
@@ -448,9 +456,10 @@ function subscribeToGroup() {
         return;
       }
       volatile.groupData = groupData;
-      render();
+      renderFromSync();
     },
     (members) => {
+      const before = state.plan + JSON.stringify(state.readDays);
       volatile.members = members;
       const me = members.find(m => m.uid === volatile.userId);
       if (me) {
@@ -468,10 +477,75 @@ function subscribeToGroup() {
         }
         saveState();
       }
-      render();
+      // 다른 조원의 체크만 바뀐 경우, 조원 정보를 보여주는 화면(목록·조원·기도)이 아니면
+      // 본문 전체를 다시 그릴 필요가 없다.
+      const mineChanged = before !== state.plan + JSON.stringify(state.readDays);
+      if (mineChanged || ['list', 'members', 'prayer'].includes(state.view)) renderFromSync();
     }
   );
 }
+
+// === 동기화발 다시 그리기 ===
+// 실시간 구독 콜백은 화면 전체를 innerHTML로 다시 그리므로, 사용자가 입력칸에
+// 글을 쓰는 중이면 미뤘다가 입력칸을 벗어날 때 반영한다(쓰던 글·키보드 보호).
+let _pendingSyncRender = false;
+function isUserTyping() {
+  const ae = document.activeElement;
+  const app = document.getElementById('app');
+  if (!ae || !app || !app.contains(ae)) return false;
+  if (ae.tagName === 'TEXTAREA') return true;
+  return ae.tagName === 'INPUT' && /^(text|email|search|tel|url|)$/.test(ae.type || '');
+}
+function renderFromSync() {
+  if (isUserTyping()) { _pendingSyncRender = true; return; }
+  render();
+}
+// === 뒤로가기(Android 뒤로 버튼 / iOS 스와이프) ===
+// 하위 화면에 들어갈 때 history 항목을 쌓아, 뒤로가기가 앱 종료가 아닌 이전 화면으로 가게 한다.
+const VIEW_DEPTH = { list: 1, settings: 1, members: 1, prayer: 1, feedback: 2 };
+const VIEW_PARENT = { feedback: 'settings' };
+let _ignorePop = 0;
+function isSetUp() {
+  return !volatile.needsLogin && state.plan && state.mode &&
+    (state.mode === 'solo' ? !!state.startDate : !!state.groupId);
+}
+function syncHistory() {
+  const want = isSetUp() ? (VIEW_DEPTH[state.view] || 0) : 0;
+  const hs = history.state || {};
+  const cur = hs.depth || 0;
+  try {
+    if (want > cur) {
+      for (let d = cur + 1; d <= want; d++) {
+        history.pushState({ depth: d, view: d === want ? state.view : VIEW_PARENT[state.view] }, '');
+      }
+    } else if (want < cur) {
+      _ignorePop++;
+      history.go(want - cur); // 앱 안의 '돌아가기' 버튼으로 나온 경우 쌓인 항목 정리
+    } else if (want > 0 && hs.view !== state.view) {
+      history.replaceState({ depth: want, view: state.view }, '');
+    }
+  } catch (e) {}
+}
+window.addEventListener('popstate', (e) => {
+  if (_ignorePop > 0) { _ignorePop--; return; }
+  const yt = document.getElementById('yt-overlay');
+  if (yt) yt.remove();
+  const memo = document.getElementById('memo-modal');
+  if (memo) memo.classList.remove('show');
+  const depth = (e.state && e.state.depth) || 0;
+  const target = depth === 0 ? 'main' : ((e.state && e.state.view) || 'main');
+  if (state.view === target) return;
+  state.view = target;
+  saveState();
+  render();
+});
+
+document.addEventListener('focusout', () => {
+  if (!_pendingSyncRender) return;
+  setTimeout(() => {
+    if (_pendingSyncRender && !isUserTyping()) render();
+  }, 0);
+});
 
 // === 혼자 ↔ 조 전환 ===
 function persistActiveMode() {
@@ -681,6 +755,7 @@ let _lastPageKey = null;
 
 function render() {
   const app = document.getElementById('app');
+  _pendingSyncRender = false;
 
   if (!volatile.authReady) {
     app.innerHTML = '<div class="setup"><h1>📖 성경 통독</h1><p class="lead">불러오는 중...</p></div>';
@@ -692,6 +767,7 @@ function render() {
   const samePage = pageKey === _lastPageKey;
   const prevScrollY = window.scrollY;
   _lastPageKey = pageKey;
+  syncHistory();
 
   if (volatile.needsLogin) {
     app.innerHTML = renderLoginGate();
@@ -748,7 +824,9 @@ function render() {
   if (state.view === 'list') {
     app.innerHTML = renderList();
     bindList();
-    scrollToToday();
+    // 처음 들어올 때만 '오늘'로 이동. 동기화로 다시 그릴 땐 보던 위치 유지.
+    if (samePage) window.scrollTo(0, prevScrollY);
+    else scrollToToday();
     return;
   }
   if (state.view === 'settings') {
@@ -954,7 +1032,7 @@ function renderPlayerOverlay(videoId, label, activeIdx, showBack) {
       ${_playerChapters.length > 1 ? `<div class="yt-chapters">${chipsHtml}</div>` : ''}
       ${videoId ? `
         <div class="yt-iframe-wrap">
-          <iframe src="https://www.youtube-nocookie.com/embed/${videoId}?autoplay=1&rel=0"
+          <iframe src="https://www.youtube-nocookie.com/embed/${videoId}?autoplay=1&playsinline=1&rel=0"
             allow="accelerometer; autoplay; clipboard-write; encrypted-media; gyroscope; picture-in-picture"
             allowfullscreen></iframe>
         </div>` : `<p style="padding:16px;color:var(--muted);text-align:center">챕터를 선택해주세요</p>`}
@@ -1724,7 +1802,7 @@ function ensurePrayerSub() {
   if (volatile.prayerUnsub || !state.groupId) return;
   volatile.prayerUnsub = Groups.subscribePrayers(state.groupId, (arr) => {
     volatile.prayers = arr;
-    if (state.view === 'prayer') render();
+    if (state.view === 'prayer') renderFromSync();
   });
 }
 
@@ -1752,7 +1830,7 @@ function toggleComments(prayerId) {
     volatile.openComments[prayerId] = true;
     volatile.commentUnsubs[prayerId] = Groups.subscribeComments(state.groupId, prayerId, (arr) => {
       volatile.comments[prayerId] = arr;
-      if (state.view === 'prayer') render();
+      if (state.view === 'prayer') renderFromSync();
     });
   }
   render();
@@ -1841,6 +1919,8 @@ function bindPrayer() {
     try {
       await Groups.addPrayer(state.groupId, text, myDisplayName());
       ta.value = '';
+      ta.blur();
+      render(); // 입력 중이라 미뤄둔 동기화 반영
     } catch (e) {
       alert('등록 실패: ' + (e.message || e));
     } finally {
@@ -1873,7 +1953,7 @@ function bindPrayer() {
       const text = input.value.trim();
       if (!text) return;
       el.disabled = true;
-      try { await Groups.addComment(state.groupId, pid, text, myDisplayName()); input.value = ''; }
+      try { await Groups.addComment(state.groupId, pid, text, myDisplayName()); input.value = ''; input.blur(); render(); }
       catch (e) { alert('댓글 실패: ' + (e.message || e)); }
       finally { el.disabled = false; }
     };
@@ -2192,6 +2272,7 @@ function bindSettings() {
   const toolbar = document.getElementById('hl-toolbar');
   if (!toolbar) return;
   const VERSE_SEL = '.verse[data-ref], .verse-compare[data-ref]';
+  const IS_TOUCH = window.matchMedia && window.matchMedia('(pointer: coarse)').matches;
   let _targetRefs = [];
 
   function verseEl(ref) {
@@ -2225,14 +2306,23 @@ function bindSettings() {
     return refs;
   }
 
-  function showToolbar(rect) {
+  // preferBelow: 터치 기기에서 길게 눌러 선택하면 iOS/Android 기본 메뉴(복사 등)가
+  // 선택 영역 위에 뜨므로, 겹치지 않게 툴바를 선택 영역 아래에 둔다.
+  function showToolbar(rect, preferBelow) {
     const tb = toolbar;
     tb.classList.add('show');
     const tbW = tb.offsetWidth || 180;
+    const tbH = tb.offsetHeight || 44;
     let left = rect.left + rect.width / 2 - tbW / 2;
     left = Math.max(8, Math.min(left, window.innerWidth - tbW - 8));
-    let top = rect.top - 48;
-    if (top < 8) top = rect.bottom + 8;
+    let top;
+    if (preferBelow) {
+      top = rect.bottom + 12;
+      if (top + tbH > window.innerHeight - 8) top = Math.max(8, rect.top - tbH - 56);
+    } else {
+      top = rect.top - 48;
+      if (top < 8) top = rect.bottom + 8;
+    }
     tb.style.left = left + 'px';
     tb.style.top = top + 'px';
   }
@@ -2254,10 +2344,8 @@ function bindSettings() {
       }
     }
     saveState();
+    // 형광펜은 개인 프로필(users/{uid})에만 저장. 조 문서에 쓰면 조원 전원 화면이 다시 그려짐.
     pushSoloData({ highlights: state.highlights });
-    if (state.mode === 'group' && state.groupId) {
-      Groups.setReadDays(state.groupId, state.readDays).catch(() => {});
-    }
     hideToolbar();
     window.getSelection().removeAllRanges();
   }
@@ -2288,7 +2376,17 @@ function bindSettings() {
     const refs = versesInRange(range);
     if (!refs.length) return;
     _targetRefs = refs;
-    showToolbar(range.getBoundingClientRect());
+    showToolbar(range.getBoundingClientRect(), IS_TOUCH);
+  });
+
+  // iOS Safari는 클릭 핸들러가 없는 빈 영역 탭에 click 이벤트를 보내지 않아
+  // 툴바가 안 닫힌다 → pointerdown으로 바깥 탭을 직접 감지해 닫는다.
+  document.addEventListener('pointerdown', (e) => {
+    if (!toolbar.classList.contains('show')) return;
+    if (toolbar.contains(e.target)) return;
+    if (findVerseEl(e.target)) return; // 절 탭은 click 핸들러가 처리
+    if (e.target.closest && e.target.closest('.verse-memo-badge')) return;
+    hideToolbar();
   });
 
   // 절 탭/클릭 → 그 절 기준 툴바(탭 지점 근처). 바깥/그 외 탭 → 닫기.
