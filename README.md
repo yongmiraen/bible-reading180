@@ -14,7 +14,9 @@
 - `index.html` — 앱 본체
 - `app.js` — 로직
 - `schedule-data.js` — 180일 통독 일정 (PDF에서 추출)
-- `bible-data.js` — 개역개정 본문
+- `bible/GAE.js` — 개역개정 본문 + 소제목 (첫 화면에 로드)
+- `bible/SAENEW.js`, `bible/NIV.js`, `bible/ESV.js` — 비교 보기에서 필요할 때 로드
+- `bible-data.js` — 원본 (4개 번역 통합). 수정 후 `node scripts/split-bible-data.js`로 `bible/` 재생성
 - `manifest.json` / `icon.svg` — PWA 설정
 
 ## 데이터 출처
