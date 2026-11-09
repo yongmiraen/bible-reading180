@@ -14,7 +14,8 @@
   firebase.initializeApp(window.FIREBASE_CONFIG);
   const auth = firebase.auth();
   const db = firebase.firestore();
-  const analytics = firebase.analytics();
+  // 광고 차단기 등으로 analytics 스크립트가 막혀도 앱(인증·동기화)은 동작해야 한다
+  try { if (firebase.analytics) firebase.analytics(); } catch (e) { console.warn('analytics off', e); }
 
   // 오프라인 캐시 (best-effort, iOS Safari 호환을 위해 synchronizeTabs 제거)
   db.enablePersistence().catch(() => {});
@@ -156,7 +157,11 @@
   function subscribeGroup(code, onGroupData, onMembers) {
     unsubscribe();
     groupUnsub = db.collection('groups').doc(code).onSnapshot(
-      snap => onGroupData(snap.exists ? snap.data() : null),
+      snap => {
+        // 오프라인 캐시에 아직 없는 것뿐일 수 있음 → 서버 확인 전엔 "조 삭제"로 보지 않는다
+        if (!snap.exists && snap.metadata && snap.metadata.fromCache) return;
+        onGroupData(snap.exists ? snap.data() : null);
+      },
       err => console.error('group sub error:', err)
     );
     membersUnsub = db.collection('groups').doc(code).collection('members').onSnapshot(
@@ -178,6 +183,15 @@
     const user = await ensureSignedIn();
     await db.collection('groups').doc(code).collection('members').doc(user.uid).update({
       readDays,
+      updatedAt: firebase.firestore.FieldValue.serverTimestamp()
+    });
+  }
+
+  // 내 조원 문서의 여러 필드를 한 번에(원자적으로) 갱신 — 예: 플랜 변경 시 plan + readDays
+  async function updateMyMember(code, patch) {
+    const user = await ensureSignedIn();
+    await db.collection('groups').doc(code).collection('members').doc(user.uid).update({
+      ...patch,
       updatedAt: firebase.firestore.FieldValue.serverTimestamp()
     });
   }
@@ -293,8 +307,21 @@
     // merge:true는 중첩 맵(highlights, memos, solo.readDays)을 깊게 병합해서
     // 로컬에서 지운 키가 클라우드에 남고 → 스냅샷으로 되살아난다.
     // mergeFields: 보낸 최상위 필드만 "통째로 교체", 나머지 필드는 그대로 둔다.
-    try { await ref.set(payload, { mergeFields: Object.keys(payload) }); }
-    catch (e) { console.error('profile save:', e); }
+    try { await ref.set(payload, { mergeFields: Object.keys(payload) }); return true; }
+    catch (e) { console.error('profile save:', e); return false; }
+  }
+  // 프로필의 맵 필드(highlights, memos)에서 바뀐 키만 갱신. value가 null이면 그 키 삭제.
+  // 전체 맵을 매번 보내지 않아 쓰기가 작다. 실패(문서 없음 등)하면 false → 호출 측이 전체 저장으로 대체.
+  async function setProfileMapKeys(uid, field, entries) {
+    if (!entries || !entries.length) return true;
+    const FV = firebase.firestore.FieldValue;
+    const args = [];
+    for (const [key, value] of entries) {
+      args.push(new firebase.firestore.FieldPath(field, String(key)), value == null ? FV.delete() : value);
+    }
+    args.push('updatedAt', FV.serverTimestamp());
+    try { await db.collection('users').doc(uid).update(...args); return true; }
+    catch (e) { console.warn('per-key profile update failed, fallback to full save:', e.code || e); return false; }
   }
   async function getMemberOnce(code, uid) {
     const snap = await db.collection('groups').doc(code).collection('members').doc(uid).get();
@@ -365,6 +392,7 @@
     subscribeGroup,
     unsubscribe,
     setReadDays,
+    updateMyMember,
     updateGroupMeta,
     subscribePrayers,
     addPrayer,
@@ -379,6 +407,7 @@
     saveSoloData,
     watchProfile,
     saveProfile,
+    setProfileMapKeys,
     getMemberOnce,
     removeMember,
   };

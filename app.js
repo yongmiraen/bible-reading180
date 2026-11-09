@@ -20,7 +20,7 @@ const FEEDBACK_ENDPOINT = 'https://formspree.io/f/mdajorvp';
 // === 장별 마지막 절 캐시 ===
 const CHAPTER_LENGTHS = {};
 (function () {
-  const ref = (window.BIBLES && window.BIBLES.GAE) || window.BIBLE || {};
+  const ref = (window.BIBLES && window.BIBLES.GAE) || {};
   for (const key in ref) {
     const m = key.match(/^(.+?)(\d+):(\d+)$/);
     if (!m) continue;
@@ -34,7 +34,37 @@ const CHAPTER_LENGTHS = {};
 const VERSION_LABEL = { GAE: '개역개정', SAENEW: '새번역', NIV: 'NIV', ESV: 'ESV' };
 const VERSION_TAG   = { GAE: '개역',     SAENEW: '새번역',  NIV: 'NIV', ESV: 'ESV' };
 const VERSION_ORDER = ['GAE', 'SAENEW', 'NIV', 'ESV'];
-function bibleDict(v) { return (window.BIBLES && window.BIBLES[v]) || window.BIBLE || {}; }
+function bibleDict(v) { return (window.BIBLES && window.BIBLES[v]) || {}; }
+
+// === 번역본 지연 로드 ===
+// 개역개정(bible/GAE.js)만 처음에 받고, 새번역·NIV·ESV는 비교 보기를 켤 때 받는다.
+const _versionLoads = {};
+function isVersionLoaded(v) { return !!(window.BIBLES && window.BIBLES[v]); }
+function loadVersion(v) {
+  if (isVersionLoaded(v)) return Promise.resolve();
+  if (_versionLoads[v]) return _versionLoads[v];
+  _versionLoads[v] = new Promise((resolve, reject) => {
+    const s = document.createElement('script');
+    s.src = `bible/${v}.js`;
+    s.async = true;
+    s.onload = () => (isVersionLoaded(v) ? resolve() : reject(new Error(v + ' 데이터 없음')));
+    s.onerror = () => reject(new Error(v + ' 로드 실패'));
+    document.head.appendChild(s);
+  }).catch(e => {
+    delete _versionLoads[v]; // 다음에 다시 시도할 수 있게
+    toast(`${VERSION_LABEL[v]} 본문을 불러오지 못했어요. 인터넷 연결을 확인해주세요.`);
+    throw e;
+  });
+  return _versionLoads[v];
+}
+// 지금 보기에 필요한 번역본 중 아직 없는 것을 받고, 다 받으면 다시 그린다.
+function ensureVersions(view) {
+  const missing = view.filter(v => !isVersionLoaded(v));
+  if (missing.length) {
+    Promise.all(missing.map(loadVersion)).then(() => renderFromSync(), () => {});
+  }
+  return missing;
+}
 function sortVersions(arr) {
   return [...arr].sort((a,b) => VERSION_ORDER.indexOf(a) - VERSION_ORDER.indexOf(b));
 }
@@ -178,7 +208,10 @@ function subscribeSolo() {
 function pushSoloData(patch) {
   if (!isGoogleLinked() || !volatile.userId) return;
   patch = patch || {};
-  const profilePatch = { activeMode: state.mode, groupRef: state.groupRef || null };
+  // groupRef는 값이 있을 때만 쓴다. (프로필을 아직 못 불러온 새 기기 등에서 null로 덮어써
+  // 클라우드의 조 정보를 지우는 것을 방지. 조 나가기·전체 초기화는 명시적으로 null을 쓴다.)
+  const profilePatch = { activeMode: state.mode };
+  if (state.groupRef) profilePatch.groupRef = state.groupRef;
   if (patch.highlights !== undefined) profilePatch.highlights = patch.highlights;
   if (patch.memos !== undefined) profilePatch.memos = patch.memos;
   const soloKeys = ['plan', 'startDate', 'groupName', 'readDays'];
@@ -191,7 +224,20 @@ function pushSoloData(patch) {
     for (const k of soloKeys) if (patch[k] !== undefined) solo[k] = patch[k];
     profilePatch.solo = solo;
   }
-  Groups.saveProfile(volatile.userId, profilePatch);
+  Promise.resolve(Groups.saveProfile(volatile.userId, profilePatch)).then(ok => {
+    if (ok === false) toast('클라우드 저장에 실패했어요. 잠시 후 다시 시도해주세요.');
+  });
+}
+
+// 형광펜·메모: 바뀐 절만 저장 (전체 맵을 매번 보내지 않음). 실패하면 전체 저장으로 대체.
+function pushMapKeys(field, refs) {
+  if (!isGoogleLinked() || !volatile.userId) return;
+  const map = state[field] || {};
+  const entries = refs.map(r => [r, map[r] != null ? map[r] : null]);
+  const fallback = () => pushSoloData({ [field]: map });
+  if (!Groups.setProfileMapKeys) return fallback();
+  Promise.resolve(Groups.setProfileMapKeys(volatile.userId, field, entries))
+    .then(ok => { if (!ok) fallback(); }, fallback);
 }
 
 function loadState() {
@@ -239,7 +285,8 @@ function calcCurrentDay() {
   if (!sd) return null;
   const start = new Date(sd + 'T00:00:00');
   const today = new Date(todayLocalISO() + 'T00:00:00');
-  return Math.floor((today - start) / 86400000) + 1;
+  // round: 서머타임 전환일엔 하루가 23/25시간이라 floor면 하루 어긋남
+  return Math.round((today - start) / 86400000) + 1;
 }
 
 function getViewDay() {
@@ -289,6 +336,10 @@ function renderRangesHTML(ranges) {
   const view = sortVersions(normalizeBibleView(state.bibleView));
   const isCompare = view.length > 1;
   const parts = [];
+  const loading = ensureVersions(view);
+  if (loading.length) {
+    parts.push(`<p class="bible-toggle-hint">⏳ ${loading.map(v => VERSION_LABEL[v]).join(', ')} 본문을 불러오는 중…</p>`);
+  }
   for (const range of ranges) {
     const book = range[0];
     const fullBook = BOOK_NAMES[book] || book;
@@ -540,6 +591,33 @@ window.addEventListener('popstate', (e) => {
   render();
 });
 
+// === 날짜 변경(자정) 감지 ===
+let _lastToday = todayLocalISO();
+function pinShownDayAcrossMidnight() {
+  const t = todayLocalISO();
+  if (t === _lastToday) return;
+  _lastToday = t;
+  if (state.view !== 'main' || !isSetUp()) return;
+  if (state.viewDay == null && _mainDay != null) {
+    // 읽는 도중 자정이 지남 → 보던 날을 고정(스크롤 유지), '오늘로' 버튼만 생김
+    state.viewDay = _mainDay;
+    _mainDayAutoPinned = true;
+    saveState();
+    _lastPageKey = currentPageKey();
+    renderFromSync();
+  }
+}
+setInterval(() => { if (!document.hidden) pinShownDayAcrossMidnight(); }, 60000);
+document.addEventListener('visibilitychange', () => {
+  if (document.hidden || !volatile.authReady) return;
+  const t = todayLocalISO();
+  const dayChanged = t !== _lastToday;
+  _lastToday = t;
+  // 다시 열었을 때: 자정 때문에 고정했던 날은 풀고 새 '오늘'로
+  if (_mainDayAutoPinned) { state.viewDay = null; _mainDayAutoPinned = false; saveState(); renderFromSync(); }
+  else if (dayChanged) renderFromSync();
+});
+
 document.addEventListener('focusout', () => {
   if (!_pendingSyncRender) return;
   setTimeout(() => {
@@ -550,10 +628,9 @@ document.addEventListener('focusout', () => {
 // === 혼자 ↔ 조 전환 ===
 function persistActiveMode() {
   if (!volatile.userId || !isGoogleLinked()) return;
-  Groups.saveProfile(volatile.userId, {
-    activeMode: state.mode,
-    groupRef: state.groupRef || null
-  });
+  const patch = { activeMode: state.mode };
+  if (state.groupRef) patch.groupRef = state.groupRef;
+  Groups.saveProfile(volatile.userId, patch);
 }
 
 function switchToSolo() {
@@ -601,12 +678,20 @@ function switchToGroup() {
   }
 }
 
+// 조가 삭제된 경우: 조 관련 필드만 정리 (형광펜·메모·혼자 진도는 보존)
 function exitGroup() {
   Groups.unsubscribe();
-  state = defaultState();
+  state.groupId = null;
+  state.groupRef = null;
+  state.displayName = '';
+  state.readDays = {};
+  state.mode = null;
+  state.view = 'main';
+  state.viewDay = null;
   saveState();
   volatile.groupData = null;
   volatile.members = [];
+  if (volatile.userId && isGoogleLinked()) Groups.saveProfile(volatile.userId, { activeMode: null, groupRef: null });
   render();
 }
 
@@ -661,16 +746,36 @@ async function init() {
   }
   volatile.needsLogin = false;
 
-  // 클라우드 프로필 단발 로드 → 마지막 화면/조/혼자 복원 (기기 간)
-  try {
-    const rawCloud = await new Promise((resolve) => {
-      let done = false;
-      const unsub = Groups.watchProfile(volatile.userId, (d) => {
-        if (!done) { done = true; resolve(d); }
-        if (typeof unsub === 'function') unsub();
-      });
-      setTimeout(() => { if (!done) { done = true; resolve(null); } }, 4000);
+  // 클라우드 프로필 로드 → 마지막 화면/조/혼자 복원 (기기 간)
+  // 4초 안에 안 오면 일단 진행하되, 늦게 도착한 프로필도 반영한다(느린 모바일 망).
+  // 리스너는 init 끝(구독 시작 후)에 해제 → 같은 문서를 다시 구독할 때 읽기 중복 없음.
+  let profileUnsub = null, profileTimedOut = false;
+  const rawCloud = await new Promise((resolve) => {
+    let done = false;
+    profileUnsub = Groups.watchProfile(volatile.userId, (d) => {
+      if (!done) { done = true; resolve(d); return; }
+      if (profileTimedOut) {
+        profileTimedOut = false;
+        const wasSetUp = isSetUp();
+        applyCloudProfile(d);
+        if (profileUnsub) { profileUnsub(); profileUnsub = null; }
+        if (!wasSetUp && isSetUp()) {
+          if (state.mode === 'group' && state.groupId) subscribeToGroup();
+          else if (state.mode === 'solo') subscribeSolo();
+          render();
+        }
+      }
     });
+    setTimeout(() => { if (!done) { done = true; profileTimedOut = true; resolve(null); } }, 4000);
+  });
+  applyCloudProfile(rawCloud);
+  // 늦게 올 프로필을 기다리는 중이 아니면, 아래 구독이 시작된 뒤 리스너 해제
+  setTimeout(() => { if (!profileTimedOut && profileUnsub) { profileUnsub(); profileUnsub = null; } }, 0);
+  initAfterProfile();
+}
+
+function applyCloudProfile(rawCloud) {
+  try {
     let cloudForMerge = rawCloud;
     if (rawCloud && !rawCloud.solo) {
       const flatSolo = normalizeFlatSolo(rawCloud);
@@ -707,6 +812,9 @@ async function init() {
     }
     saveState();
   } catch (e) { console.error('profile load', e); }
+}
+
+function initAfterProfile() {
 
   // 로그인으로 UID가 바뀌었던 경우, 이전 UID의 중복 조원 정리 시도
   try {
@@ -1308,6 +1416,7 @@ function renderJoinForm(prefilledCode, fromLink) {
         <input type="text" id="displayName" placeholder="예) 홍길동" maxlength="20" value="${escapeHtml(state.displayName||'')}">
       </label>
       <button class="primary" id="joinBtn">참가하기</button>
+      ${fromLink ? `<button class="back-btn" id="skipInviteBtn" style="display:block;margin:14px auto 0">참가하지 않고 돌아가기</button>` : ''}
     </div>`;
 }
 
@@ -1315,6 +1424,17 @@ function bindJoinForm(fromLink) {
   if (!fromLink) {
     document.getElementById('backToGroupChoice').onclick = () => {
       state.view = 'main'; saveState(); render();
+    };
+  } else if (document.getElementById('skipInviteBtn')) {
+    // 초대 링크로 들어왔지만 참가하지 않음 → 초대 정보 지우고 원래 화면으로
+    document.getElementById('skipInviteBtn').onclick = () => {
+      pendingInviteCode = null;
+      try { sessionStorage.removeItem('pendingInvite'); } catch (e) {}
+      state.view = 'main';
+      saveState();
+      if (state.mode === 'group' && state.groupId) subscribeToGroup();
+      else if (state.mode === 'solo' && isGoogleLinked()) subscribeSolo();
+      render();
     };
   }
   document.getElementById('joinBtn').onclick = async () => {
@@ -1390,10 +1510,19 @@ function bindInviteShare() {
 }
 
 // === 메인 ===
+let _mainDay = null;       // 화면에 그려진 Day (버튼은 클릭 시점이 아닌 이 값 기준)
+let _mainDayAutoPinned = false;
 function renderMain() {
+  // 조 모드: 조 정보(시작일)가 오기 전엔 날짜를 계산할 수 없음 → 로딩 표시
+  if (state.mode === 'group' && !volatile.groupData) {
+    _mainDay = null;
+    return `${renderHeader()}
+    <div class="card status-card"><div class="boot-spinner" aria-hidden="true"></div><p class="lead">조 정보를 불러오는 중…</p></div>`;
+  }
   const day = getViewDay();
+  _mainDay = day;
   const realToday = calcCurrentDay();
-  const totalRead = Object.keys(state.readDays).filter(k => state.readDays[k]).length;
+  const totalRead = countReadDays(state.readDays, TOTAL_DAYS);
   const pct = Math.round(totalRead / TOTAL_DAYS * 100);
 
   if (day == null || day < 1) {
@@ -1499,12 +1628,14 @@ function bindMain() {
     state.viewDay = (n === calcCurrentDay()) ? null : n;
     saveState(); render();
   };
-  document.querySelectorAll('.prev-day-btn').forEach(b => b.onclick = () => goDay(getViewDay() - 1));
-  document.querySelectorAll('.next-day-btn').forEach(b => b.onclick = () => goDay(getViewDay() + 1));
-  document.querySelectorAll('.goto-today-btn').forEach(b => b.onclick = () => { state.viewDay = null; saveState(); render(); });
-  if ($('checkBtn')) $('checkBtn').onclick = () => toggleRead(getViewDay());
+  // 화면에 보이는 Day 기준으로 동작 (자정이 지나도 보던 날이 체크되도록)
+  const shownDay = () => (_mainDay != null ? _mainDay : getViewDay());
+  document.querySelectorAll('.prev-day-btn').forEach(b => b.onclick = () => goDay(shownDay() - 1));
+  document.querySelectorAll('.next-day-btn').forEach(b => b.onclick = () => goDay(shownDay() + 1));
+  document.querySelectorAll('.goto-today-btn').forEach(b => b.onclick = () => { state.viewDay = null; _mainDayAutoPinned = false; saveState(); render(); });
+  if ($('checkBtn')) $('checkBtn').onclick = () => toggleRead(shownDay());
   if ($('bulkReadBtn')) $('bulkReadBtn').onclick = () => {
-    const day = getViewDay();
+    const day = shownDay();
     if (!confirm(`Day 1부터 ${day}까지 모두 읽음으로 표시할까요?`)) return;
     for (let i = 1; i <= day; i++) state.readDays[i] = true;
     saveState();
@@ -2145,8 +2276,9 @@ function bindSettings() {
     applyPlan(newPlan);
     saveState();
     if (state.mode === 'group' && state.groupId) {
-      Groups.joinGroup({ code: state.groupId, displayName: state.displayName, plan: newPlan }).catch(() => {});
-      Groups.setReadDays(state.groupId, state.readDays).catch(() => {});
+      // plan과 readDays를 한 번에 써야 중간 상태(옛 plan + 새 readDays)가 생기지 않는다
+      Groups.updateMyMember(state.groupId, { plan: newPlan, readDays: state.readDays })
+        .catch(e => { console.error('plan change', e); alert('기간 변경을 서버에 저장하지 못했어요. 인터넷 연결을 확인 후 다시 시도해주세요.'); });
     }
     if (state.mode === 'solo' && isGoogleLinked()) {
       pushSoloData({ plan: newPlan, readDays: state.readDays });
@@ -2190,11 +2322,15 @@ function bindSettings() {
     try { await Groups.leaveGroup(state.groupId); } catch (e) { console.error(e); }
     Groups.unsubscribe();
     state.groupId = null;
+    state.groupRef = null; // 나간 조로 다시 들어가지 않게
     state.mode = null;
     state.view = 'main';
     volatile.groupData = null;
     volatile.members = [];
-    saveState(); render();
+    saveState();
+    // 클라우드 프로필에서도 조 정보 제거 (다른 기기·재실행 시 복원 방지)
+    if (volatile.userId && isGoogleLinked()) Groups.saveProfile(volatile.userId, { activeMode: null, groupRef: null });
+    render();
   };
   if ($('resetReadBtn')) $('resetReadBtn').onclick = () => {
     if (!confirm('읽음 진도만 초기화할까요?')) return;
@@ -2253,13 +2389,22 @@ function bindSettings() {
     state.view = 'feedback'; saveState(); render();
   };
   $('resetAllBtn').onclick = async () => {
-    if (!confirm('전체 초기화 후 처음부터 시작하시겠어요?\n조 모드라면 조에서도 나갑니다.')) return;
+    if (!confirm('전체 초기화 후 처음부터 시작하시겠어요?\n조 모드라면 조에서도 나갑니다.\n(형광펜·메모는 그대로 남아요)')) return;
     if (state.mode === 'group' && state.groupId) {
       try { await Groups.leaveGroup(state.groupId); } catch (e) {}
       Groups.unsubscribe();
     }
-    state = defaultState();
+    if (soloUnsub) { soloUnsub(); soloUnsub = null; }
+    const keep = { highlights: state.highlights, memos: state.memos, bibleView: state.bibleView };
+    state = Object.assign(defaultState(), keep);
     saveState();
+    // 클라우드 프로필도 초기화 (안 하면 새로고침 시 이전 진도·조로 복원됨)
+    if (volatile.userId && isGoogleLinked()) {
+      Groups.saveProfile(volatile.userId, {
+        activeMode: null, groupRef: null,
+        solo: { plan: '180', startDate: null, groupName: '', readDays: {} },
+      });
+    }
     volatile.groupData = null;
     volatile.members = [];
     render();
@@ -2344,8 +2489,8 @@ function bindSettings() {
       }
     }
     saveState();
-    // 형광펜은 개인 프로필(users/{uid})에만 저장. 조 문서에 쓰면 조원 전원 화면이 다시 그려짐.
-    pushSoloData({ highlights: state.highlights });
+    // 형광펜은 개인 프로필(users/{uid})에만, 바뀐 절만 저장. 조 문서에 쓰면 조원 전원 화면이 다시 그려짐.
+    pushMapKeys('highlights', _targetRefs);
     hideToolbar();
     window.getSelection().removeAllRanges();
   }
@@ -2369,14 +2514,20 @@ function bindSettings() {
   });
 
   // 드래그 선택(데스크톱) — 비접힘 선택이면 선택 위치에 툴바. 접힘이면 닫지 않음(탭 처리와 충돌 방지)
+  // 선택 핸들을 끄는 동안 이벤트가 연달아 오므로 프레임당 한 번만 계산한다.
+  let _selRaf = 0;
   document.addEventListener('selectionchange', () => {
-    const sel = window.getSelection();
-    if (!sel || sel.isCollapsed || !sel.rangeCount) return;
-    const range = sel.getRangeAt(0);
-    const refs = versesInRange(range);
-    if (!refs.length) return;
-    _targetRefs = refs;
-    showToolbar(range.getBoundingClientRect(), IS_TOUCH);
+    if (_selRaf) return;
+    _selRaf = requestAnimationFrame(() => {
+      _selRaf = 0;
+      const sel = window.getSelection();
+      if (!sel || sel.isCollapsed || !sel.rangeCount) return;
+      const range = sel.getRangeAt(0);
+      const refs = versesInRange(range);
+      if (!refs.length) return;
+      _targetRefs = refs;
+      showToolbar(range.getBoundingClientRect(), IS_TOUCH);
+    });
   });
 
   // iOS Safari는 클릭 핸들러가 없는 빈 영역 탭에 click 이벤트를 보내지 않아
@@ -2438,7 +2589,7 @@ function openMemoEditor(ref) {
     if (text) state.memos[ref] = text;
     else delete state.memos[ref];
     saveState();
-    pushSoloData({ memos: state.memos });
+    pushMapKeys('memos', [ref]);
     close();
     render();
   }
