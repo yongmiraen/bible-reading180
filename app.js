@@ -2419,6 +2419,7 @@ function bindSettings() {
   const VERSE_SEL = '.verse[data-ref], .verse-compare[data-ref]';
   const IS_TOUCH = window.matchMedia && window.matchMedia('(pointer: coarse)').matches;
   let _targetRefs = [];
+  let _shownAtScrollY = 0;
 
   function verseEl(ref) {
     return document.querySelector(`.verse[data-ref="${ref}"], .verse-compare[data-ref="${ref}"]`);
@@ -2465,11 +2466,12 @@ function bindSettings() {
       top = rect.bottom + 12;
       if (top + tbH > window.innerHeight - 8) top = Math.max(8, rect.top - tbH - 56);
     } else {
-      top = rect.top - 48;
+      top = rect.top - tbH - 6; // 실제 툴바 높이 기준 (버튼을 키운 뒤 48 고정값이면 첫 줄을 가림)
       if (top < 8) top = rect.bottom + 8;
     }
     tb.style.left = left + 'px';
     tb.style.top = top + 'px';
+    _shownAtScrollY = window.scrollY;
   }
 
   function hideToolbar() {
@@ -2555,7 +2557,12 @@ function bindSettings() {
     hideToolbar();
   });
 
-  document.addEventListener('scroll', hideToolbar, true);
+  // 스크롤하면 닫되, 툴바를 연 위치에서 실제로 움직였을 때만.
+  // (관성 스크롤 끝이나 클릭 직전 자동 스크롤의 늦게 도착한 scroll 이벤트가 방금 연 툴바를 닫지 않게)
+  document.addEventListener('scroll', () => {
+    if (!toolbar.classList.contains('show')) return;
+    if (Math.abs(window.scrollY - _shownAtScrollY) > 40) hideToolbar();
+  }, true);
 })();
 
 // === 메모 에디터 ===
