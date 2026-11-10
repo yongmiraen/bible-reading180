@@ -289,6 +289,30 @@ function calcCurrentDay() {
   return Math.round((today - start) / 86400000) + 1;
 }
 
+// N일차의 실제 날짜 (시작일 기준)
+const WEEKDAY_KO = ['일', '월', '화', '수', '목', '금', '토'];
+function dateOfDay(n) {
+  const sd = effectiveStartDate();
+  if (!sd || !n) return null;
+  const d = new Date(sd + 'T00:00:00');
+  d.setDate(d.getDate() + n - 1);
+  return d;
+}
+function fmtDayDate(n, short) {
+  const d = dateOfDay(n);
+  if (!d) return '';
+  return short
+    ? `${d.getMonth() + 1}/${d.getDate()} ${WEEKDAY_KO[d.getDay()]}`
+    : `${d.getMonth() + 1}월 ${d.getDate()}일 (${WEEKDAY_KO[d.getDay()]})`;
+}
+
+// 본문 글자 크기 (px). 설정한 적 없으면 18px.
+const FONT_SIZES = [16, 18, 20, 22, 24];
+function verseFontSize() {
+  const v = +state.fontSize;
+  return FONT_SIZES.includes(v) ? v : 18;
+}
+
 function getViewDay() {
   return state.viewDay != null ? state.viewDay : calcCurrentDay();
 }
@@ -452,7 +476,7 @@ function emoji3d(name, sizeClass = 'md', alt = '') {
 }
 
 function relativeTime(ts) {
-  if (!ts) return '활동 기록 없음';
+  if (!ts) return '';
   let date;
   try { date = ts.toDate ? ts.toDate() : (ts.seconds ? new Date(ts.seconds*1000) : new Date(ts)); }
   catch (e) { return ''; }
@@ -733,7 +757,10 @@ async function init() {
   } catch (e) {
     console.error('Auth failed', e);
     document.getElementById('app').innerHTML =
-      '<div class="setup"><h1>📖 성경 통독</h1><p class="lead">인증 오류 — 인터넷 연결을 확인해주세요</p></div>';
+      `<div class="setup" style="text-align:center"><h1>📖 성경 통독</h1>
+        <p class="lead" role="alert">서버에 연결하지 못했어요.<br>인터넷 연결을 확인한 뒤 다시 시도해주세요.</p>
+        <button class="primary" onclick="location.reload()">다시 시도</button>
+        <p class="hint">시크릿(개인정보보호) 탭이라면 일반 탭에서 열어주세요</p></div>`;
     return;
   }
 
@@ -1149,22 +1176,50 @@ function renderPlayerOverlay(videoId, label, activeIdx, showBack) {
 
 function renderBibleToggle() {
   const sel = new Set(normalizeBibleView(state.bibleView));
-  const chip = (ver) => `<button class="${sel.has(ver)?'active':''} ver-${ver.toLowerCase()}" data-ver="${ver}">${sel.has(ver)?'✓ ':''}${VERSION_LABEL[ver]}</button>`;
-  const hint = sel.size === 1 ? '하나 더 골라 비교할 수 있어요' : `${sel.size}개 비교 중`;
+  const chip = (ver) => `<button class="${sel.has(ver)?'active':''} ver-${ver.toLowerCase()}" data-ver="${ver}" aria-pressed="${sel.has(ver)}">${sel.has(ver)?'✓ ':''}${VERSION_LABEL[ver]}</button>`;
+  const hint = sel.size === 1
+    ? '하나 더 누르면 나란히 비교해요 <span style="white-space:nowrap">(최대 2개)</span>'
+    : '2개 비교 중 · <span style="white-space:nowrap">다시 누르면 해제</span>';
   return `
-    <div class="bible-toggle chip" role="tablist">
+    <div class="bible-toggle chip" role="group" aria-label="번역 선택">
       ${chip('GAE')}${chip('SAENEW')}${chip('NIV')}${chip('ESV')}
     </div>
     <div class="bible-toggle-hint">${hint}</div>`;
+}
+
+// 본문 글자 크기 조절 + (처음 한 번) 형광펜 안내
+function renderReaderTools() {
+  const fs = verseFontSize();
+  const i = FONT_SIZES.indexOf(fs);
+  return `
+    <div class="reader-tools">
+      <span class="rt-label">글자 크기</span>
+      <button class="rt-btn" data-fs="-1" aria-label="본문 글자 작게" ${i <= 0 ? 'disabled' : ''}>가<small>−</small></button>
+      <span class="rt-val" aria-live="polite">${fs}</span>
+      <button class="rt-btn" data-fs="1" aria-label="본문 글자 크게" ${i >= FONT_SIZES.length - 1 ? 'disabled' : ''}>가<small>+</small></button>
+    </div>
+    ${state.hlHintSeen ? '' : `
+    <div class="hl-hint">
+      <span>💡 절을 누르면 <b>형광펜</b>과 <b>개인 메모</b>를 쓸 수 있어요</span>
+      <button class="hl-hint-close" aria-label="안내 닫기">✕</button>
+    </div>`}`;
+}
+// 형광펜·메모를 한 번 쓰거나 안내를 닫으면 다시 보이지 않게 (기기에 저장)
+function markHlHintSeen() {
+  if (state.hlHintSeen) return;
+  state.hlHintSeen = true;
+  saveState();
+  const h = document.querySelector('.hl-hint');
+  if (h) h.remove();
 }
 
 function renderModeToggle() {
   if (!isGoogleLinked()) return '';
   const solo = state.mode === 'solo';
   return `
-    <div class="mode-toggle">
-      <button class="mode-toggle-btn ${solo?'active':''}" id="toggleSolo">🙂 혼자</button>
-      <button class="mode-toggle-btn ${!solo?'active':''}" id="toggleGroup">👥 조</button>
+    <div class="mode-toggle" role="group" aria-label="사용 방식">
+      <button class="mode-toggle-btn ${solo?'active':''}" id="toggleSolo" aria-pressed="${solo}">🙂 혼자</button>
+      <button class="mode-toggle-btn ${!solo?'active':''}" id="toggleGroup" aria-pressed="${!solo}">👥 조</button>
     </div>`;
 }
 
@@ -1184,10 +1239,10 @@ function renderHeader() {
         ${title ? `<div class="group-name">${escapeHtml(title)}</div>` : ''}
       </div>
       <div class="header-actions">
-        ${state.mode === 'group' ? `<button class="icon-btn" id="prayerBtn" title="기도제목">🙏</button>` : ''}
-        ${state.mode === 'group' ? `<button class="icon-btn" id="membersBtn" title="조원">👥</button>` : ''}
-        <button class="icon-btn" id="listBtn" title="전체 일정">📅</button>
-        <button class="icon-btn" id="settingsBtn" title="설정">⚙️</button>
+        ${state.mode === 'group' ? `<button class="icon-btn" id="prayerBtn" aria-label="기도제목"><span class="ib-ico" aria-hidden="true">🙏</span><span class="ib-txt">기도</span></button>` : ''}
+        ${state.mode === 'group' ? `<button class="icon-btn" id="membersBtn" aria-label="조원 진도"><span class="ib-ico" aria-hidden="true">👥</span><span class="ib-txt">조원</span></button>` : ''}
+        <button class="icon-btn" id="listBtn" aria-label="전체 일정"><span class="ib-ico" aria-hidden="true">📅</span><span class="ib-txt">일정</span></button>
+        <button class="icon-btn" id="settingsBtn" aria-label="설정"><span class="ib-ico" aria-hidden="true">⚙️</span><span class="ib-txt">설정</span></button>
       </div>
     </header>
     ${renderModeToggle()}`;
@@ -1198,6 +1253,7 @@ function renderPlanSelect() {
   return `
     <div class="setup">
       <h1>📖 성경 통독</h1>
+      <p class="step">1 / 3 단계 · 기간 선택</p>
       <p class="lead">통독 기간을 선택해주세요</p>
       <div class="mode-choice">
         <button class="mode-card" id="plan180">
@@ -1236,6 +1292,7 @@ function renderModeSelect() {
     <div class="setup">
       <button class="back-btn" id="backToPlan">← 기간 선택으로</button>
       <h1>📖 성경 통독</h1>
+      <p class="step">2 / 3 단계 · 사용 방식</p>
       <p class="lead">${TOTAL_DAYS}일 동안 함께 통독해요</p>
       <div class="mode-choice">
         <button class="mode-card" id="modeSolo">
@@ -1281,11 +1338,13 @@ function renderSoloSetup() {
     <div class="setup">
       <button class="back-btn" id="backToMode">← 모드 선택으로</button>
       <h1>🙂 혼자 사용</h1>
+      <p class="step">3 / 3 단계 · 시작일</p>
       <p class="lead">통독 시작일을 정해주세요</p>
       <label class="form-row">통독 시작일
         <input type="date" id="startDate" value="${todayLocalISO()}">
+        <span class="field-hint">이 날짜가 1일차가 돼요</span>
       </label>
-      <label class="form-row">표시 이름 <span class="optional">(선택)</span>
+      <label class="form-row">내 통독 이름 <span class="optional">(선택 · 화면 위에 표시)</span>
         <input type="text" id="groupName" placeholder="예) 나의 통독" maxlength="40">
       </label>
       <button class="primary" id="startBtn">시작하기</button>
@@ -1316,7 +1375,9 @@ function renderGroupChoice() {
     <div class="setup">
       <button class="back-btn" id="backToMode">← 모드 선택으로</button>
       <h1>👥 조와 함께</h1>
+      <p class="step">3 / 3 단계 · 조</p>
       <p class="lead">새로 만드시겠어요, 참가하시겠어요?</p>
+      <p class="hint" style="margin:-14px 0 18px">초대 링크를 받으셨다면, 그 링크를 누르면 바로 참가 화면이 열려요</p>
       <div class="mode-choice">
         <button class="mode-card" id="goCreate">
           <span class="mode-icon">${emoji3d('Sparkles','md','새 조 만들기')}</span>
@@ -1360,6 +1421,7 @@ function renderCreateForm() {
       </label>
       <label class="form-row">통독 시작일
         <input type="date" id="startDate" value="${todayLocalISO()}">
+        <span class="field-hint">이 날짜가 1일차가 돼요 (조원 모두 같은 날짜 기준)</span>
       </label>
       <label class="form-row">본인 이름 <span class="optional">(조원들에게 표시됨)</span>
         <input type="text" id="displayName" placeholder="예) 홍길동" maxlength="20">
@@ -1535,11 +1597,19 @@ function renderMain() {
     </div>`;
   }
   if (day > TOTAL_DAYS) {
+    // 일정 기간이 끝남. 모두 체크했을 때만 '완주' — 아니면 남은 본문으로 안내
+    const allRead = totalRead >= TOTAL_DAYS;
     return `${renderHeader()}
     <div class="card status-card">
-      ${emoji3d('Party popper','xl')}
-      <h2>통독 완주를 축하합니다!</h2>
-      <p>총 ${TOTAL_DAYS}일 완료 (${totalRead}일 체크)</p>
+      ${allRead ? `
+        ${emoji3d('Party popper','xl')}
+        <h2>통독 완주를 축하합니다!</h2>
+        <p>${TOTAL_DAYS}일 모두 읽으셨어요 🙌</p>` : `
+        ${emoji3d('Spiral calendar','lg')}
+        <h2>통독 일정이 끝났어요</h2>
+        <p>${TOTAL_DAYS}일 중 <b>${totalRead}일</b> 읽었어요</p>
+        <button class="primary" id="unreadListBtn">남은 본문 ${TOTAL_DAYS - totalRead}일 보기</button>`}
+      <button class="back-btn" id="lastDayBtn" style="display:block;margin:12px auto 0">${TOTAL_DAYS}일차 본문 보기</button>
     </div>`;
   }
 
@@ -1554,31 +1624,37 @@ function renderMain() {
       <div class="progress-text">${totalRead} / ${TOTAL_DAYS}일 (${pct}%)</div>
     </div>
 
+    ${volatile.syncStatus === 'error' ? '<div class="sync-status sync-error" role="alert">⚠ 진도를 서버에 저장하지 못했어요 — 인터넷 연결을 확인해주세요 (이 기기에는 저장됨)</div>' : ''}
+
     ${renderDayNav(day, realToday, isToday)}
 
     <div class="card passage-card ${isRead?'is-read':''}">
-      ${isRead ? '<div class="read-banner">✓ 오늘 본문 읽기 완료</div>' : ''}
+      ${isRead ? `<div class="read-banner">✓ ${day}일차 읽기 완료</div>` : ''}
       <h2 class="passage-label">${escapeHtml(entry.l)}</h2>
-      ${entry.p ? `<div class="passage-ref">📚 교재 ${entry.p}</div>` : ''}
+      ${entry.p ? `<div class="passage-ref">📚 통독 교재 ${String(entry.p).replace(/p$/, '쪽')}</div>` : ''}
+      <button class="check-top ${isRead?'checked':''}" data-act="check" aria-pressed="${isRead}">
+        ${isRead ? `✓ ${day}일차 읽음 완료` : `○ ${day}일차 읽음 표시`}
+      </button>
+      <div class="check-top-hint">${isRead ? '다시 누르면 취소돼요' : '다 읽으셨다면 눌러주세요'}</div>
       ${renderListenBtn(entry)}
       ${entry.r.length === 0 ?
         `<div class="study-only">
           <p>📖 오늘은 성경 본문 대신 외부 교재를 읽어요.</p>
           <p class="study-text">${escapeHtml(entry.s || '')}</p>
         </div>` :
-        `${renderBibleToggle()}<div class="passage-body">${renderRangesHTML(entry.r)}</div>`}
+        `${renderBibleToggle()}${renderReaderTools()}
+        <div class="passage-body" style="--verse-size:${verseFontSize()}px">${renderRangesHTML(entry.r)}</div>`}
     </div>
 
     <div class="actions">
-      <button class="check ${isRead?'checked':''}" id="checkBtn">
-        ${isRead ? '✓ 읽음' : '○ 읽음 표시'}
+      <button class="check ${isRead?'checked':''}" id="checkBtn" data-act="check" aria-pressed="${isRead}">
+        ${isRead ? `✓ ${day}일차 읽음 완료 · 누르면 취소` : `○ ${day}일차 읽음 표시`}
       </button>
       <button class="share" id="shareBtn">📤 공유</button>
       <button class="copy" id="copyBtn">📋 본문 복사</button>
     </div>
-    ${day > 1 ? `<button class="bulk-read-btn" id="bulkReadBtn">Day 1~${day} 까지 모두 읽음 표시</button>` : ''}
+    ${day > 1 ? `<button class="bulk-read-btn" id="bulkReadBtn">1~${day}일차를 모두 읽음으로 표시</button>` : ''}
     ${renderDayNav(day, realToday, isToday)}
-    ${volatile.syncStatus === 'error' ? '<div class="sync-status sync-error">⚠ 동기화 오류 — 인터넷 연결을 확인해주세요</div>' : ''}
   `;
 }
 
@@ -1587,8 +1663,9 @@ function renderDayNav(day, realToday, isToday) {
     <nav class="day-nav">
       <button class="prev-day-btn" ${day<=1?'disabled':''}>← 이전</button>
       <div class="day-indicator">
-        <div class="day-num">Day ${day}</div>
-        ${isToday ? '<span class="today-tag">오늘</span>' : `<button class="goto-today goto-today-btn">오늘로 (Day ${realToday})</button>`}
+        <div class="day-num">${day}일차</div>
+        <div class="day-date">${fmtDayDate(day)}${isToday ? ' <span class="today-tag">오늘</span>' : ''}</div>
+        ${isToday ? '' : `<button class="goto-today goto-today-btn">오늘(${realToday}일차)로 가기</button>`}
       </div>
       <button class="next-day-btn" ${day>=TOTAL_DAYS?'disabled':''}>다음 →</button>
     </nav>`;
@@ -1633,7 +1710,8 @@ function bindMain() {
   document.querySelectorAll('.prev-day-btn').forEach(b => b.onclick = () => goDay(shownDay() - 1));
   document.querySelectorAll('.next-day-btn').forEach(b => b.onclick = () => goDay(shownDay() + 1));
   document.querySelectorAll('.goto-today-btn').forEach(b => b.onclick = () => { state.viewDay = null; _mainDayAutoPinned = false; saveState(); render(); });
-  if ($('checkBtn')) $('checkBtn').onclick = () => toggleRead(shownDay());
+  // 읽음 버튼: 본문 위·아래 두 곳 (같은 동작)
+  document.querySelectorAll('[data-act="check"]').forEach(b => b.onclick = () => toggleRead(shownDay()));
   if ($('bulkReadBtn')) $('bulkReadBtn').onclick = () => {
     const day = shownDay();
     if (!confirm(`Day 1부터 ${day}까지 모두 읽음으로 표시할까요?`)) return;
@@ -1663,13 +1741,39 @@ function bindMain() {
         cur = cur.filter(x => x !== ver);
       } else {
         cur.push(ver);
-        if (cur.length > 2) cur.shift(); // 가장 오래된 항목 제거
+        if (cur.length > 2) {
+          const removed = cur.shift(); // 가장 오래된 항목 제거 — 조용히 바뀌지 않게 알림
+          toast(`비교 번역 변경: ${VERSION_LABEL[removed]} → ${VERSION_LABEL[ver]} (최대 2개)`);
+        }
       }
       state.bibleView = cur;
       saveState();
       render();
     };
   });
+  // 글자 크기
+  document.querySelectorAll('.rt-btn').forEach(b => {
+    b.onclick = () => {
+      const i = FONT_SIZES.indexOf(verseFontSize()) + (+b.dataset.fs);
+      if (i < 0 || i >= FONT_SIZES.length) return;
+      state.fontSize = FONT_SIZES[i];
+      saveState();
+      // 다시 그리지 않고 크기만 바꿔 읽던 위치 유지
+      const body = document.querySelector('.passage-body');
+      if (body) body.style.setProperty('--verse-size', state.fontSize + 'px');
+      const val = document.querySelector('.rt-val');
+      if (val) val.textContent = state.fontSize;
+      document.querySelectorAll('.rt-btn').forEach(x => {
+        const j = FONT_SIZES.indexOf(state.fontSize) + (+x.dataset.fs);
+        x.disabled = j < 0 || j >= FONT_SIZES.length;
+      });
+    };
+  });
+  const hintClose = document.querySelector('.hl-hint-close');
+  if (hintClose) hintClose.onclick = () => markHlHintSeen();
+  // 완주/일정 종료 화면
+  if ($('unreadListBtn')) $('unreadListBtn').onclick = () => { volatile.listUnreadOnly = true; state.view = 'list'; saveState(); render(); };
+  if ($('lastDayBtn')) $('lastDayBtn').onclick = () => { state.viewDay = TOTAL_DAYS; saveState(); render(); };
   bindModeToggle();
 }
 
@@ -1716,7 +1820,11 @@ function legacyCopy(text, msg) {
 
 function toast(msg) {
   let t = document.getElementById('toast');
-  if (!t) { t = document.createElement('div'); t.id = 'toast'; document.body.appendChild(t); }
+  if (!t) {
+    t = document.createElement('div'); t.id = 'toast';
+    t.setAttribute('role', 'status'); t.setAttribute('aria-live', 'polite'); // 화면 낭독기에도 알림
+    document.body.appendChild(t);
+  }
   t.textContent = msg;
   t.classList.add('show');
   clearTimeout(toast._t);
@@ -1743,7 +1851,10 @@ function renderList() {
     }
   }
 
-  const items = SCHEDULE.map(d => {
+  // '안 읽은 날만': 오늘(또는 일정 끝)까지 중 아직 체크 안 한 날
+  const unreadOnly = !!volatile.listUnreadOnly;
+  const upTo = Math.min(cur || TOTAL_DAYS, TOTAL_DAYS);
+  const items = SCHEDULE.filter(d => !unreadOnly || (!state.readDays[d.d] && d.d <= upTo)).map(d => {
     const isRead = !!state.readDays[d.d];
     const isToday = (d.d === cur);
     const isStudy = d.r.length === 0;
@@ -1755,9 +1866,9 @@ function renderList() {
     } else {
       stat = `<span class="li-check">${isRead ? '✓' : ''}</span>`;
     }
-    return `<li class="list-item ${isRead?'read':''} ${isToday?'today':''} ${isStudy?'study':''}" data-day="${d.d}">
-      <span class="li-num">${d.d}</span>
-      <span class="li-label">${escapeHtml(d.l)}</span>
+    return `<li class="list-item ${isRead?'read':''} ${isToday?'today':''} ${isStudy?'study':''}" data-day="${d.d}" role="button" tabindex="0" aria-label="${d.d}일차 ${escapeHtml(d.l)}${isRead ? ' 읽음' : ''}${isToday ? ' 오늘' : ''}">
+      <span class="li-num">${d.d}<small>일차</small></span>
+      <span class="li-label">${escapeHtml(d.l)}<span class="li-date">${fmtDayDate(d.d, true)}${isToday ? ' · 오늘' : ''}</span></span>
       ${stat}
     </li>`;
   }).join('');
@@ -1768,7 +1879,14 @@ function renderList() {
       <button class="back-btn" id="backBtn">← 돌아가기</button>
       <span class="list-summary">${isGroup ? `조원 ${memberCount}명 · ` : ''}내 진도 ${countReadDays(state.readDays)} / ${TOTAL_DAYS}</span>
     </div>
-    <ul class="day-list">${items}</ul>
+    <div class="list-filter">
+      <button class="list-filter-btn ${unreadOnly ? '' : 'active'}" data-filter="all" aria-pressed="${!unreadOnly}">전체 일정</button>
+      <button class="list-filter-btn ${unreadOnly ? 'active' : ''}" data-filter="unread" aria-pressed="${unreadOnly}">안 읽은 날만</button>
+    </div>
+    <ul class="day-list">${items || `<li class="list-empty">${
+      !cur || cur < 1 ? '아직 통독 시작 전이에요'
+      : countReadDays(state.readDays) >= TOTAL_DAYS ? '모두 읽으셨어요 🎉'
+      : `오늘(${Math.min(cur, TOTAL_DAYS)}일차)까지 밀린 본문이 없어요 👍`}</li>`}</ul>
   `;
 }
 
@@ -1783,6 +1901,14 @@ function bindList() {
       state.viewDay = (d === calcCurrentDay()) ? null : d;
       state.view = 'main';
       saveState(); render();
+    };
+    li.onkeydown = (e) => { if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); li.onclick(); } };
+  });
+  document.querySelectorAll('.list-filter-btn').forEach(b => {
+    b.onclick = () => {
+      volatile.listUnreadOnly = b.dataset.filter === 'unread';
+      _lastPageKey = null; // 필터 바꾸면 위치를 다시 잡음
+      render();
     };
   });
   bindModeToggle();
@@ -1804,7 +1930,7 @@ function renderMembers() {
     const days = countReadDays(m.readDays, mTotal);
     const pct = Math.round(days/mTotal*100);
     const last = relativeTime(m.updatedAt);
-    const planTag = mTotal === 365 ? '<span class="plan-tag t365">365</span>' : '<span class="plan-tag t180">180</span>';
+    const planTag = mTotal === 365 ? '<span class="plan-tag t365">365일</span>' : '<span class="plan-tag t180">180일</span>';
     const isDupOfMe = !isMe && myName !== '' && (m.displayName || '').trim() === myName;
     let actions = '';
     if (isDupOfMe) actions += `<button class="prayer-mini-btn" data-act="merge-old" data-uid="${m.uid}">🔁 내 이전 기록 합치기</button>`;
@@ -1812,7 +1938,7 @@ function renderMembers() {
     return `<div class="member-row ${isMe?'me':''}">
       <span class="member-name">${escapeHtml(m.displayName || '익명')}${isMe?'<span class="you-tag">나</span>':''}${planTag}</span>
       <span class="member-progress"><b>${days}</b>/${mTotal}일 (${pct}%)</span>
-      <span class="member-last-full">마지막 활동 <b>${last}</b></span>
+      <span class="member-last-full">${last ? `최근 활동 <b>${last}</b>` : '아직 활동 기록이 없어요'}</span>
       <div class="member-bar"><div class="member-bar-fill" style="width:${pct}%"></div></div>
       ${actions ? `<div class="member-actions">${actions}</div>` : ''}
     </div>`;
@@ -1879,6 +2005,18 @@ function bindMembers() {
 // === 로그인 게이트 (Google 로그인 강제) ===
 const GOOGLE_ICON = `<span style="display:inline-block;width:18px;height:18px;vertical-align:-4px;margin-right:8px;background:url('data:image/svg+xml;utf8,<svg xmlns=%22http://www.w3.org/2000/svg%22 viewBox=%220 0 48 48%22><path fill=%22%23FFC107%22 d=%22M43.6 20.1H42V20H24v8h11.3c-1.6 4.7-6.1 8-11.3 8-6.6 0-12-5.4-12-12s5.4-12 12-12c3.1 0 5.8 1.2 7.9 3.1l5.7-5.7C34.6 6.1 29.6 4 24 4 12.9 4 4 12.9 4 24s8.9 20 20 20 20-8.9 20-20c0-1.3-.1-2.6-.4-3.9z%22/><path fill=%22%23FF3D00%22 d=%22M6.3 14.7l6.6 4.8c1.8-4.4 6-7.5 11-7.5 3.1 0 5.8 1.2 7.9 3.1l5.7-5.7C34.6 6.1 29.6 4 24 4 16.1 4 9.3 8.4 6.3 14.7z%22/><path fill=%22%234CAF50%22 d=%22M24 44c5.5 0 10.5-2.1 14.3-5.5l-6.6-5.6C29.6 34.3 26.9 35 24 35c-5.2 0-9.6-3.3-11.2-7.9l-6.6 5.1C9.3 39.6 16.1 44 24 44z%22/><path fill=%22%231976D2%22 d=%22M43.6 20.1H42V20H24v8h11.3c-.8 2.3-2.3 4.3-4.3 5.7l6.6 5.6c-.5.4 7.4-5.4 7.4-15.3 0-1.3-.1-2.6-.4-3.9z%22/></svg>') center/contain no-repeat"></span>`;
 
+// 로그인 오류를 쉬운 말로 (기술 코드는 작게 따로 표시)
+function friendlyAuthError(e) {
+  const code = (e && e.code) || '';
+  if (code === 'auth/popup-blocked') return '로그인 창이 차단됐어요. 브라우저에서 팝업을 허용한 뒤 다시 눌러주세요.';
+  if (code === 'auth/network-request-failed') return '인터넷 연결이 불안정해요. 연결을 확인한 뒤 다시 시도해주세요.';
+  if (code === 'auth/web-storage-unsupported' || code === 'auth/operation-not-supported-in-this-environment')
+    return '이 브라우저에서는 로그인할 수 없어요. 사파리나 크롬의 일반 탭에서 열어주세요.';
+  if (code === 'auth/too-many-requests') return '잠시 후 다시 시도해주세요.';
+  if (code === 'auth/user-disabled') return '사용할 수 없는 계정이에요. 다른 Google 계정으로 시도해주세요.';
+  return '로그인하지 못했어요. 잠시 후 다시 시도해주세요.';
+}
+
 function renderLoginGate() {
   return `
     <div class="setup" style="text-align:center;max-width:420px;margin:0 auto;padding:40px 20px">
@@ -1910,7 +2048,10 @@ function bindLoginGate() {
         if (status) status.textContent = '로그인이 취소되었어요. 다시 시도해주세요.';
         return;
       }
-      if (status) status.textContent = '로그인 실패: ' + (e.message || e.code || e);
+      if (status) {
+        status.setAttribute('role', 'alert');
+        status.innerHTML = `${escapeHtml(friendlyAuthError(e))}<br><small style="opacity:.7">(${escapeHtml(e.code || e.message || String(e))})</small>`;
+      }
     }
   };
 }
@@ -2367,7 +2508,7 @@ function bindSettings() {
         btn.textContent = 'Google로 동기화하기';
         return;
       }
-      alert('연결 실패: ' + (e.message || e.code || e));
+      alert(friendlyAuthError(e) + '\n(' + (e.code || e.message || e) + ')');
       render();
     }
   };
@@ -2419,6 +2560,7 @@ function bindSettings() {
   const VERSE_SEL = '.verse[data-ref], .verse-compare[data-ref]';
   const IS_TOUCH = window.matchMedia && window.matchMedia('(pointer: coarse)').matches;
   let _targetRefs = [];
+  let _shownAtScrollY = 0;
 
   function verseEl(ref) {
     return document.querySelector(`.verse[data-ref="${ref}"], .verse-compare[data-ref="${ref}"]`);
@@ -2465,11 +2607,12 @@ function bindSettings() {
       top = rect.bottom + 12;
       if (top + tbH > window.innerHeight - 8) top = Math.max(8, rect.top - tbH - 56);
     } else {
-      top = rect.top - 48;
+      top = rect.top - tbH - 6; // 실제 툴바 높이 기준 (버튼을 키운 뒤 48 고정값이면 첫 줄을 가림)
       if (top < 8) top = rect.bottom + 8;
     }
     tb.style.left = left + 'px';
     tb.style.top = top + 'px';
+    _shownAtScrollY = window.scrollY;
   }
 
   function hideToolbar() {
@@ -2491,6 +2634,7 @@ function bindSettings() {
     saveState();
     // 형광펜은 개인 프로필(users/{uid})에만, 바뀐 절만 저장. 조 문서에 쓰면 조원 전원 화면이 다시 그려짐.
     pushMapKeys('highlights', _targetRefs);
+    markHlHintSeen();
     hideToolbar();
     window.getSelection().removeAllRanges();
   }
@@ -2555,7 +2699,12 @@ function bindSettings() {
     hideToolbar();
   });
 
-  document.addEventListener('scroll', hideToolbar, true);
+  // 스크롤하면 닫되, 툴바를 연 위치에서 실제로 움직였을 때만.
+  // (관성 스크롤 끝이나 클릭 직전 자동 스크롤의 늦게 도착한 scroll 이벤트가 방금 연 툴바를 닫지 않게)
+  document.addEventListener('scroll', () => {
+    if (!toolbar.classList.contains('show')) return;
+    if (Math.abs(window.scrollY - _shownAtScrollY) > 40) hideToolbar();
+  }, true);
 })();
 
 // === 메모 에디터 ===
@@ -2574,24 +2723,46 @@ function openMemoEditor(ref) {
   ta.value = state.memos[ref] || '';
   const delBtn = document.getElementById('memo-del');
   if (delBtn) delBtn.style.display = state.memos[ref] ? '' : 'none';
+  modal.dataset.orig = ta.value;          // 바뀐 게 있는지 비교용
+  _memoReturnFocus = document.activeElement; // 닫은 뒤 포커스 복귀
   modal.classList.add('show');
+  markHlHintSeen();
   setTimeout(() => ta.focus(), 50);
 }
+let _memoReturnFocus = null;
 
 (function initMemo() {
   const modal = document.getElementById('memo-modal');
   if (!modal) return;
   const ta = document.getElementById('memo-text');
 
-  function close() { modal.classList.remove('show'); modal.dataset.ref = ''; }
+  function close() {
+    modal.classList.remove('show');
+    modal.dataset.ref = '';
+    const f = _memoReturnFocus;
+    _memoReturnFocus = null;
+    if (f && document.contains(f) && f.focus) { try { f.focus({ preventScroll: true }); } catch (e) {} }
+  }
+  // 바깥 터치·Esc로 닫을 때: 저장하지 않은 변경이 있을 때만 확인
+  function closeWithGuard() {
+    if (ta.value !== (modal.dataset.orig || '') && !confirm('작성 중인 메모를 저장하지 않고 닫을까요?')) return;
+    close();
+  }
 
   function saveMemo(ref, text) {
+    const had = !!state.memos[ref];
     if (text) state.memos[ref] = text;
     else delete state.memos[ref];
     saveState();
     pushMapKeys('memos', [ref]);
     close();
     render();
+    // 다시 그리면 이전 요소가 사라지므로, 그린 뒤 해당 절의 메모 뱃지로 포커스 복귀
+    try {
+      const b = document.querySelector(`.verse-memo-badge[data-ref="${CSS.escape(ref)}"]`);
+      if (b) b.focus({ preventScroll: true });
+    } catch (e) {}
+    toast(text ? '메모를 저장했어요' : (had ? '메모를 지웠어요' : '빈 메모라 저장하지 않았어요'));
   }
 
   const saveBtn = document.getElementById('memo-save');
@@ -2609,8 +2780,21 @@ function openMemoEditor(ref) {
   const cancelBtn = document.getElementById('memo-cancel');
   if (cancelBtn) cancelBtn.onclick = close;
 
-  // 카드 바깥 클릭 시 닫기
-  modal.addEventListener('click', (e) => { if (e.target === modal) close(); });
+  // 카드 바깥 클릭·Esc 시 닫기 (작성 중이면 확인)
+  modal.addEventListener('click', (e) => { if (e.target === modal) closeWithGuard(); });
+  document.addEventListener('keydown', (e) => {
+    if (!modal.classList.contains('show')) return;
+    if (e.key === 'Escape') { e.preventDefault(); closeWithGuard(); return; }
+    // aria-modal: Tab 포커스를 메모 창 안에서만 순환
+    if (e.key === 'Tab') {
+      const f = [...modal.querySelectorAll('textarea, button')].filter(x => x.offsetParent !== null && !x.disabled);
+      if (!f.length) return;
+      const first = f[0], last = f[f.length - 1];
+      if (!modal.contains(document.activeElement)) { e.preventDefault(); first.focus(); }
+      else if (e.shiftKey && document.activeElement === first) { e.preventDefault(); last.focus(); }
+      else if (!e.shiftKey && document.activeElement === last) { e.preventDefault(); first.focus(); }
+    }
+  });
 
   // 메모 뱃지 클릭(위임) → 편집창 열기
   document.addEventListener('click', (e) => {
