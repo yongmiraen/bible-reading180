@@ -5,3 +5,5 @@ Thumbs.db
 .idea/
 node_modules/
 .superpowers/
+test/e2e/results.json
+test/e2e/shots/
