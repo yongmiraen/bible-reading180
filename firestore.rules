@@ -31,7 +31,21 @@ service cloud.firestore {
       return request.resource.data.displayName is string
         && request.resource.data.displayName.size() > 0
         && request.resource.data.displayName.size() <= 20
-        && request.resource.data.readDays is map;
+        && request.resource.data.readDays is map
+        && validMemorized();
+    }
+
+    // 성경암송 72구절: 외운 구절 사본 (선택 필드). 원본은 users/{uid}.memorized
+    function validMemorized() {
+      return !('memorized' in request.resource.data)
+        || (request.resource.data.memorized is map && request.resource.data.memorized.size() <= 72);
+    }
+
+    // 조 암송 시작일 (선택 필드, 조장만)
+    function validMemoStart() {
+      return !('memoStart' in request.resource.data)
+        || (request.resource.data.memoStart is string
+            && request.resource.data.memoStart.matches('^\\d{4}-\\d{2}-\\d{2}$'));
     }
 
     function isPrayerOwner(groupId, prayerId) {
@@ -50,12 +64,13 @@ service cloud.firestore {
       allow create: if signedIn() && validGroupCreate();
 
       allow update: if isGroupOwner(groupId)
-        && request.resource.data.diff(resource.data).affectedKeys().hasOnly(['name', 'startDate'])
+        && request.resource.data.diff(resource.data).affectedKeys().hasOnly(['name', 'startDate', 'memoStart'])
         && request.resource.data.name is string
         && request.resource.data.name.size() > 0
         && request.resource.data.name.size() <= 40
         && request.resource.data.startDate is string
-        && request.resource.data.startDate.matches('^\\d{4}-\\d{2}-\\d{2}$');
+        && request.resource.data.startDate.matches('^\\d{4}-\\d{2}-\\d{2}$')
+        && validMemoStart();
 
       allow delete: if isGroupOwner(groupId);
 
@@ -68,14 +83,14 @@ service cloud.firestore {
         allow create: if signedIn()
           && request.auth.uid == userId
           && exists(/databases/$(database)/documents/groups/$(groupId))
-          && request.resource.data.keys().hasOnly(['displayName', 'plan', 'readDays', 'joinedAt', 'updatedAt'])
+          && request.resource.data.keys().hasOnly(['displayName', 'plan', 'readDays', 'memorized', 'joinedAt', 'updatedAt'])
           && validMemberData()
           && request.resource.data.joinedAt == request.time
           && request.resource.data.updatedAt == request.time;
 
         allow update: if signedIn()
           && request.auth.uid == userId
-          && request.resource.data.diff(resource.data).affectedKeys().hasOnly(['displayName', 'plan', 'readDays', 'updatedAt'])
+          && request.resource.data.diff(resource.data).affectedKeys().hasOnly(['displayName', 'plan', 'readDays', 'memorized', 'updatedAt'])
           && validMemberData()
           && request.resource.data.updatedAt == request.time;
 

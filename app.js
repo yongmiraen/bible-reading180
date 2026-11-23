@@ -36,6 +36,10 @@ const VERSION_TAG   = { GAE: '개역',     SAENEW: '새번역',  NIV: 'NIV', ESV
 const VERSION_ORDER = ['GAE', 'SAENEW', 'NIV', 'ESV'];
 function bibleDict(v) { return (window.BIBLES && window.BIBLES[v]) || {}; }
 
+// === 성경암송 72구절: 등록된 구절 id (정규화·집계 기준) ===
+const MEMO_IDS = new Set((window.MemorizeLogic && window.MEMORIZE72)
+  ? window.MemorizeLogic.listVerses(window.MEMORIZE72).map(v => v.id) : []);
+
 // === 번역본 지연 로드 ===
 // 개역개정(bible/GAE.js)만 처음에 받고, 새번역·NIV·ESV는 비교 보기를 켤 때 받는다.
 const _versionLoads = {};
@@ -85,6 +89,8 @@ const defaultState = () => ({
   memos: {},            // { "창4:2": "메모 텍스트", ... } — 개인용, 전역
   soloStash: { plan: '180', startDate: null, groupName: '', readDays: {} },
   groupRef: null,        // { groupId, displayName } | null
+  memorized: {},         // 성경암송: { "고후5:17": "2026-11-23", ... } — 원본은 users/{uid}.memorized
+  memoStartSolo: null,   // 혼자 모드 암송 시작일 'YYYY-MM-DD' (users/{uid}.memoStart)
 });
 
 // 이전 버전 호환: 문자열이면 배열로 변환
@@ -148,6 +154,7 @@ let volatile = {
   commentUnsubs: {},    // { prayerId: unsub }
   openComments: {},     // { prayerId: true }
   editingPrayer: null,  // 인라인 수정 중인 prayerId
+  memorizedConfirmed: false, // 서버가 확인한 암송 원본을 한 번이라도 받았는지 (조 생성·참가 때 사본 포함 여부)
 };
 let pendingInviteCode = null;
 let lastInviteCode = null;
@@ -169,14 +176,23 @@ function normalizeFlatSolo(data) {
   return null;
 }
 
-// 혼자 모드 Firestore 구독 (프로필 기반)
+// 프로필 구독이 없으면 건다 — 조 만들기·참가·초대 건너뛰기·초기화 등 어느 경로에서도 이것만 부른다
+function ensureProfileSub() {
+  if (!soloUnsub && volatile.userId && isGoogleLinked()) subscribeSolo();
+}
+
+// 프로필 Firestore 구독 — 혼자·조 모드 모두 유지 (암송 원본·형광펜·메모는 모드와 무관한 개인 데이터)
 function subscribeSolo() {
   if (soloUnsub) { soloUnsub(); soloUnsub = null; }
   if (!volatile.userId || !isGoogleLinked()) return;
-  soloUnsub = Groups.watchProfile(volatile.userId, (data) => {
-    if (!data) return;
-    let changed = false;
-    if (data.groupRef !== undefined && JSON.stringify(data.groupRef) !== JSON.stringify(state.groupRef)) {
+  soloUnsub = Groups.watchProfile(volatile.userId, (data, meta) => {
+    meta = meta || { fromCache: false, hasPendingWrites: false };
+    const memoChanged = applyMemorizedFromCloud(data, meta);
+    if (!meta.fromCache && !meta.hasPendingWrites) scheduleReconcile('profile');
+    if (!data) { if (memoChanged) { saveState(); renderFromSync(); } return; }
+    let changed = memoChanged;
+    // 조 모드에서는 다른 기기의 조 포인터 변경을 적용하지 않는다(현재 조와 어긋나지 않게)
+    if (state.mode !== 'group' && data.groupRef !== undefined && JSON.stringify(data.groupRef) !== JSON.stringify(state.groupRef)) {
       state.groupRef = data.groupRef; changed = true;
     }
     if (data.highlights && JSON.stringify(data.highlights) !== JSON.stringify(state.highlights)) {
@@ -196,12 +212,97 @@ function subscribeSolo() {
         if (JSON.stringify(mergedRead) !== JSON.stringify(state.readDays)) { state.readDays = mergedRead; changed = true; }
         state.soloStash = { plan: state.plan, startDate: state.startDate, groupName: state.groupName, readDays: { ...mergedRead } };
       } else {
-        state.soloStash = { plan: cs.plan, startDate: cs.startDate, groupName: cs.groupName, readDays: mergedRead };
+        // 조 모드: 클라우드에 값이 없으면 기존 보관값을 지키고(빈 값으로 덮지 않게), 읽음은 합집합
+        const prev = state.soloStash || {};
+        state.soloStash = {
+          plan: cs.plan || prev.plan || '180',
+          startDate: cs.startDate || prev.startDate || null,
+          groupName: cs.groupName !== undefined ? cs.groupName : (prev.groupName || ''),
+          readDays: mergedRead,
+        };
       }
     }
     if (changed) { saveState(); renderFromSync(); }
     else { saveState(); }
   });
+}
+
+// === 성경암송: 외운 기록 ===
+// 프로필 스냅샷 → state.memorized. 서버 확인값이면 그대로 교체(다른 기기에서 해제한 것도 반영),
+// 캐시값이면 병합만(아직 확인 안 된 빈 값으로 지우지 않게). 반환: 바뀌었는지
+function applyMemorizedFromCloud(data, meta) {
+  const L = window.MemorizeLogic;
+  if (!L) return false;
+  const confirmed = meta && !meta.fromCache;
+  const cloud = L.normalizeMemorized(data && data.memorized, MEMO_IDS);
+  const next = confirmed ? cloud : Object.assign({}, state.memorized, cloud);
+  let changed = !L.sameMemorized(next, state.memorized);
+  state.memorized = next;
+  if (confirmed) {
+    volatile.memorizedConfirmed = true;
+    const raw = data && data.memoStart;
+    const ms = typeof raw === 'string' && /^\d{4}-\d{2}-\d{2}$/.test(raw) ? raw : null; // 형식이 다르면 무시
+    if (ms !== state.memoStartSolo) { state.memoStartSolo = ms; changed = true; }
+  }
+  return changed;
+}
+
+// 현재 조의 내 조원 문서 사본을 원본에 맞춘다(서버 트랜잭션). 한 번에 하나, 실패 시 5s·30s·120s 재시도.
+const RECONCILE_BACKOFF = [5000, 30000, 120000];
+const _reconcile = { running: false, again: false, attempt: 0, timer: null, blocked: false };
+function scheduleReconcile(reason) {
+  const gid = (state.groupRef && state.groupRef.groupId) || state.groupId;
+  if (!gid || !volatile.userId || !isGoogleLinked() || !Groups.reconcileMemorized || _reconcile.blocked === gid) return;
+  if (_reconcile.running) { _reconcile.again = true; return; }
+  _reconcile.running = true;
+  clearTimeout(_reconcile.timer);
+  Groups.reconcileMemorized(gid, volatile.userId, MEMO_IDS).then(() => {
+    _reconcile.attempt = 0;
+  }, e => {
+    if (e && e.code === 'permission-denied') { _reconcile.blocked = gid; return; } // 이 조만, 로그인·권한이 바뀔 때까지 중단
+    const wait = RECONCILE_BACKOFF[Math.min(_reconcile.attempt, RECONCILE_BACKOFF.length - 1)];
+    _reconcile.attempt++;
+    _reconcile.timer = setTimeout(() => scheduleReconcile('retry'), wait);
+  }).finally(() => {
+    _reconcile.running = false;
+    if (_reconcile.again) { _reconcile.again = false; scheduleReconcile('again'); }
+  });
+}
+window.addEventListener('online', () => { _reconcile.attempt = 0; scheduleReconcile('online'); });
+if (window.Groups && Groups.onAuthChange) Groups.onAuthChange(() => { _reconcile.blocked = null; });
+
+// 새 조원 문서에 넣을 암송 사본: 서버가 확인한 원본을 받은 뒤에만 (아니면 생략 → 맞춰 쓰기가 채움)
+function memorizedForNewMember() {
+  if (!volatile.memorizedConfirmed || !window.MemorizeLogic) return undefined;
+  return window.MemorizeLogic.normalizeMemorized(state.memorized, MEMO_IDS);
+}
+
+// 외웠어요 체크/해제: 화면은 바로 바꾸고, 원본 저장이 실패하면 되돌린다.
+async function toggleMemorized(id) {
+  if (!MEMO_IDS.has(id)) return { ok: false, code: 'unknown-id' };
+  const was = state.memorized[id] || null;
+  const date = was ? null : todayLocalISO();
+  state.memorized = Object.assign({}, state.memorized);
+  if (date) state.memorized[id] = date; else delete state.memorized[id];
+  saveState();
+  renderFromSync();
+  // 새로 외우면 이전 복습 일정은 버리고 처음부터 (다른 기기에서 해제했던 구절 포함)
+  if (date && typeof memoClearReview === 'function') memoClearReview(id);
+  if (!volatile.userId || !isGoogleLinked()) {
+    if (!date && typeof memoClearReview === 'function') memoClearReview(id);
+    return { ok: true };
+  }
+  const r = await Groups.setMemorized(volatile.userId, id, date);
+  // 해제는 저장이 확정된 뒤에만 복습 일정을 지운다 (실패해 되돌리면 일정도 그대로)
+  if (r && r.ok && !date && typeof memoClearReview === 'function') memoClearReview(id);
+  if (!r || !r.ok) {
+    state.memorized = Object.assign({}, state.memorized);
+    if (was) state.memorized[id] = was; else delete state.memorized[id];
+    saveState();
+    renderFromSync();
+    toast('저장하지 못했어요. 인터넷 연결을 확인해주세요');
+  }
+  return r;
 }
 
 // 프로필 저장 (혼자 컨텍스트 + 전역 highlights + 메타). 어느 모드에서든 호출 가능.
@@ -523,6 +624,8 @@ function toggleRead(day) {
 // === 그룹 구독 ===
 function subscribeToGroup() {
   if (!state.groupId) return;
+  volatile.membersGroup = null; // 같은 조를 다시 구독해도 첫 스냅샷에서 암송 사본을 맞추도록
+  if (_reconcile.blocked === state.groupId) _reconcile.blocked = null; // 재참가 등으로 권한이 바뀌었을 수 있음
   Groups.subscribeGroup(state.groupId,
     (groupData) => {
       if (!groupData) {
@@ -535,7 +638,10 @@ function subscribeToGroup() {
     },
     (members) => {
       const before = state.plan + JSON.stringify(state.readDays);
+      const firstForGroup = volatile.membersGroup !== state.groupId;
+      volatile.membersGroup = state.groupId;
       volatile.members = members;
+      if (firstForGroup) scheduleReconcile('members'); // 조원 데이터 준비 → 내 암송 사본 맞추기
       const me = members.find(m => m.uid === volatile.userId);
       if (me) {
         // 조의 plan을 권위값으로: 들어온 멤버 plan과 다르면 적용
@@ -555,7 +661,7 @@ function subscribeToGroup() {
       // 다른 조원의 체크만 바뀐 경우, 조원 정보를 보여주는 화면(목록·조원·기도)이 아니면
       // 본문 전체를 다시 그릴 필요가 없다.
       const mineChanged = before !== state.plan + JSON.stringify(state.readDays);
-      if (mineChanged || ['list', 'members', 'prayer'].includes(state.view)) renderFromSync();
+      if (mineChanged || ['list', 'members', 'prayer', 'memorize'].includes(state.view)) renderFromSync();
     }
   );
 }
@@ -569,7 +675,8 @@ function isUserTyping() {
   const app = document.getElementById('app');
   if (!ae || !app || !app.contains(ae)) return false;
   if (ae.tagName === 'TEXTAREA') return true;
-  return ae.tagName === 'INPUT' && /^(text|email|search|tel|url|)$/.test(ae.type || '');
+  // date 포함: 조장이 암송 시작일을 고르는 중에 동기화로 다시 그려 값이 사라지지 않게
+  return ae.tagName === 'INPUT' && /^(text|email|search|tel|url|date|)$/.test(ae.type || '');
 }
 function renderFromSync() {
   if (isUserTyping()) { _pendingSyncRender = true; return; }
@@ -577,7 +684,7 @@ function renderFromSync() {
 }
 // === 뒤로가기(Android 뒤로 버튼 / iOS 스와이프) ===
 // 하위 화면에 들어갈 때 history 항목을 쌓아, 뒤로가기가 앱 종료가 아닌 이전 화면으로 가게 한다.
-const VIEW_DEPTH = { list: 1, settings: 1, members: 1, prayer: 1, feedback: 2 };
+const VIEW_DEPTH = { list: 1, settings: 1, members: 1, prayer: 1, memorize: 1, feedback: 2 };
 const VIEW_PARENT = { feedback: 'settings' };
 let _ignorePop = 0;
 function isSetUp() {
@@ -679,8 +786,8 @@ function switchToSolo() {
 }
 
 function switchToGroup() {
-  if (soloUnsub) { soloUnsub(); soloUnsub = null; }
   if (state.mode === 'group') return;
+  // 프로필 구독은 끊지 않는다(암송 원본·형광펜·메모는 조 모드에서도 동기화)
   state.soloStash = { plan: state.plan, startDate: state.startDate, groupName: state.groupName, readDays: { ...state.readDays } };
   if (state.groupRef && state.groupRef.groupId) {
     state.mode = 'group';
@@ -692,6 +799,8 @@ function switchToGroup() {
     saveState();
     persistActiveMode();
     subscribeToGroup();
+    ensureProfileSub();
+    scheduleReconcile('switch-group');
     render();
   } else {
     state.mode = 'group';
@@ -777,31 +886,32 @@ async function init() {
   // 4초 안에 안 오면 일단 진행하되, 늦게 도착한 프로필도 반영한다(느린 모바일 망).
   // 리스너는 init 끝(구독 시작 후)에 해제 → 같은 문서를 다시 구독할 때 읽기 중복 없음.
   let profileUnsub = null, profileTimedOut = false;
-  const rawCloud = await new Promise((resolve) => {
+  const first = await new Promise((resolve) => {
     let done = false;
-    profileUnsub = Groups.watchProfile(volatile.userId, (d) => {
-      if (!done) { done = true; resolve(d); return; }
+    profileUnsub = Groups.watchProfile(volatile.userId, (d, meta) => {
+      if (!done) { done = true; resolve({ d, meta }); return; }
       if (profileTimedOut) {
         profileTimedOut = false;
         const wasSetUp = isSetUp();
-        applyCloudProfile(d);
+        applyCloudProfile(d, meta);
         if (profileUnsub) { profileUnsub(); profileUnsub = null; }
         if (!wasSetUp && isSetUp()) {
           if (state.mode === 'group' && state.groupId) subscribeToGroup();
-          else if (state.mode === 'solo') subscribeSolo();
+          ensureProfileSub();
           render();
         }
       }
     });
-    setTimeout(() => { if (!done) { done = true; profileTimedOut = true; resolve(null); } }, 4000);
+    setTimeout(() => { if (!done) { done = true; profileTimedOut = true; resolve({ d: null, meta: null }); } }, 4000);
   });
-  applyCloudProfile(rawCloud);
+  const rawCloud = first.d;
+  applyCloudProfile(rawCloud, first.meta);
   // 늦게 올 프로필을 기다리는 중이 아니면, 아래 구독이 시작된 뒤 리스너 해제
   setTimeout(() => { if (!profileTimedOut && profileUnsub) { profileUnsub(); profileUnsub = null; } }, 0);
   initAfterProfile();
 }
 
-function applyCloudProfile(rawCloud) {
+function applyCloudProfile(rawCloud, meta) {
   try {
     let cloudForMerge = rawCloud;
     if (rawCloud && !rawCloud.solo) {
@@ -813,6 +923,8 @@ function applyCloudProfile(rawCloud) {
     state.groupRef = state.groupRef || merged.groupRef;
     if (rawCloud && rawCloud.highlights) state.highlights = rawCloud.highlights;
     if (rawCloud && rawCloud.memos) state.memos = rawCloud.memos;
+    // 암송: 서버가 확인한 첫 값이면 그대로 교체(다른 기기에서 해제한 구절을 바로 반영), 캐시·시간 초과면 병합만
+    applyMemorizedFromCloud(rawCloud, meta && !meta.fromCache && !meta.hasPendingWrites ? meta : { fromCache: true });
 
     const locallySetUp = (state.mode === 'group' && state.groupId) || (state.mode === 'solo' && state.startDate);
     const cloudActiveMode = rawCloud && rawCloud.activeMode ? rawCloud.activeMode : merged.activeMode;
@@ -859,17 +971,16 @@ function initAfterProfile() {
     }
   });
 
+  // 프로필(암송 원본·형광펜·메모·혼자 진도) 구독은 모드·화면과 무관하게 유지 (초대 화면 포함)
+  ensureProfileSub();
+
   if (pendingInviteCode) {
     state.view = 'join-from-link';
     render();
     return;
   }
 
-  if (state.mode === 'group' && state.groupId) {
-    subscribeToGroup();
-  } else if (state.mode === 'solo' && isGoogleLinked()) {
-    subscribeSolo(); // Google 연동 시 혼자 모드도 동기화
-  }
+  if (state.mode === 'group' && state.groupId) subscribeToGroup();
   render();
 }
 
@@ -982,6 +1093,13 @@ function render() {
       ensurePrayerSub();
       return;
     }
+  }
+  if (state.view === 'memorize' && typeof renderMemorize === 'function') {
+    app.innerHTML = renderMemorize();
+    bindMemorize();
+    if (samePage) window.scrollTo(0, prevScrollY);
+    else window.scrollTo(0, 0);
+    return;
   }
   if (state.view === 'feedback') {
     app.innerHTML = renderFeedback();
@@ -1241,6 +1359,7 @@ function renderHeader() {
       <div class="header-actions">
         ${state.mode === 'group' ? `<button class="icon-btn" id="prayerBtn" aria-label="기도제목"><span class="ib-ico" aria-hidden="true">🙏</span><span class="ib-txt">기도</span></button>` : ''}
         ${state.mode === 'group' ? `<button class="icon-btn" id="membersBtn" aria-label="조원 진도"><span class="ib-ico" aria-hidden="true">👥</span><span class="ib-txt">조원</span></button>` : ''}
+        <button class="icon-btn" id="memoBtn" aria-label="성경암송 72구절"><span class="ib-ico" aria-hidden="true">📖</span><span class="ib-txt">암송</span></button>
         <button class="icon-btn" id="listBtn" aria-label="전체 일정"><span class="ib-ico" aria-hidden="true">📅</span><span class="ib-txt">일정</span></button>
         <button class="icon-btn" id="settingsBtn" aria-label="설정"><span class="ib-ico" aria-hidden="true">⚙️</span><span class="ib-txt">설정</span></button>
       </div>
@@ -1445,7 +1564,7 @@ function bindCreateForm() {
     const btn = document.getElementById('createBtn');
     btn.disabled = true; btn.textContent = '만드는 중...';
     try {
-      const code = await Groups.createGroup({ name, startDate, displayName, plan: state.plan });
+      const code = await Groups.createGroup({ name, startDate, displayName, plan: state.plan, memorized: memorizedForNewMember() });
       logEvent('create_group');
       state.groupId = code;
       state.displayName = displayName;
@@ -1456,6 +1575,7 @@ function bindCreateForm() {
       state.view = 'invite-share';
       saveState();
       subscribeToGroup();
+      ensureProfileSub();
       render();
     } catch (e) {
       btn.disabled = false; btn.textContent = '조 만들기';
@@ -1471,6 +1591,8 @@ function renderJoinForm(prefilledCode, fromLink) {
       ${fromLink ? '' : `<button class="back-btn" id="backToGroupChoice">← 돌아가기</button>`}
       <h1>🔗 ${fromLink ? '초대받은 조 참가' : '조 참가'}</h1>
       <p class="lead">${fromLink ? '초대 링크로 들어오셨어요. 본인 이름만 입력하면 끝!' : '조장에게 받은 6자리 코드를 입력하세요'}</p>
+      ${state.groupRef && state.groupRef.groupId && state.groupRef.groupId !== (prefilledCode || '').toUpperCase()
+        ? `<p class="orphan-warn">지금 조에서 나가지 않고 참가하면, 이전 조원들은 내 마지막 진도·암송 현황을 계속 볼 수 있어요. 원하지 않으시면 먼저 설정에서 '조 나가기'를 해주세요.</p>` : ''}
       <label class="form-row">초대 코드
         <input type="text" id="joinCode" value="${escapeHtml(prefilledCode||'')}" placeholder="예) ABC123" maxlength="6" ${fromLink?'readonly':''} style="text-transform:uppercase;letter-spacing:.2em">
       </label>
@@ -1495,7 +1617,7 @@ function bindJoinForm(fromLink) {
       state.view = 'main';
       saveState();
       if (state.mode === 'group' && state.groupId) subscribeToGroup();
-      else if (state.mode === 'solo' && isGoogleLinked()) subscribeSolo();
+      ensureProfileSub(); // 혼자·조 모드 모두 프로필 구독 유지
       render();
     };
   }
@@ -1507,7 +1629,7 @@ function bindJoinForm(fromLink) {
     const btn = document.getElementById('joinBtn');
     btn.disabled = true; btn.textContent = '참가 중...';
     try {
-      await Groups.joinGroup({ code, displayName, existingReadDays: state.readDays, plan: state.plan });
+      await Groups.joinGroup({ code, displayName, existingReadDays: state.readDays, plan: state.plan, memorized: memorizedForNewMember() });
       logEvent('join_group');
       state.mode = 'group';
       state.groupId = code;
@@ -1520,6 +1642,7 @@ function bindJoinForm(fromLink) {
       state.viewDay = null;
       saveState();
       subscribeToGroup();
+      ensureProfileSub();
       render();
     } catch (e) {
       btn.disabled = false; btn.textContent = '참가하기';
@@ -1653,6 +1776,7 @@ function renderMain() {
       <button class="share" id="shareBtn">📤 공유</button>
       <button class="copy" id="copyBtn">📋 본문 복사</button>
     </div>
+    ${typeof renderMemoWeekCard === 'function' ? renderMemoWeekCard() : ''}
     ${day > 1 ? `<button class="bulk-read-btn" id="bulkReadBtn">1~${day}일차를 모두 읽음으로 표시</button>` : ''}
     ${renderDayNav(day, realToday, isToday)}
   `;
@@ -2460,7 +2584,13 @@ function bindSettings() {
   };
   if ($('leaveBtn')) $('leaveBtn').onclick = async () => {
     if (!confirm(`조 "${effectiveTitle()}"에서 나가시겠어요?\n진도 기록은 사라지지 않지만 조원들 진도는 더 이상 볼 수 없게 돼요.`)) return;
-    try { await Groups.leaveGroup(state.groupId); } catch (e) { console.error(e); }
+    // 조원 문서 삭제가 확인돼야 나간 것 — 실패하면 조원들에게 계속 보이므로 상태를 그대로 둔다
+    try { await Groups.leaveGroup(state.groupId); }
+    catch (e) {
+      console.error(e);
+      alert('조에서 나가지 못했어요. 인터넷 연결을 확인한 뒤 다시 시도해주세요.');
+      return;
+    }
     Groups.unsubscribe();
     state.groupId = null;
     state.groupRef = null; // 나간 조로 다시 들어가지 않게
@@ -2530,13 +2660,18 @@ function bindSettings() {
     state.view = 'feedback'; saveState(); render();
   };
   $('resetAllBtn').onclick = async () => {
-    if (!confirm('전체 초기화 후 처음부터 시작하시겠어요?\n조 모드라면 조에서도 나갑니다.\n(형광펜·메모는 그대로 남아요)')) return;
+    if (!confirm('전체 초기화 후 처음부터 시작하시겠어요?\n조 모드라면 조에서도 나갑니다.\n(형광펜·메모·외운 암송 구절은 그대로 남아요)')) return;
     if (state.mode === 'group' && state.groupId) {
-      try { await Groups.leaveGroup(state.groupId); } catch (e) {}
+      try { await Groups.leaveGroup(state.groupId); }
+      catch (e) {
+        alert('조에서 나가지 못해 초기화를 멈췄어요. 인터넷 연결을 확인한 뒤 다시 시도해주세요.');
+        return;
+      }
       Groups.unsubscribe();
     }
     if (soloUnsub) { soloUnsub(); soloUnsub = null; }
-    const keep = { highlights: state.highlights, memos: state.memos, bibleView: state.bibleView };
+    const keep = { highlights: state.highlights, memos: state.memos, bibleView: state.bibleView,
+      memorized: state.memorized, memoStartSolo: state.memoStartSolo };
     state = Object.assign(defaultState(), keep);
     saveState();
     // 클라우드 프로필도 초기화 (안 하면 새로고침 시 이전 진도·조로 복원됨)
@@ -2546,6 +2681,7 @@ function bindSettings() {
         solo: { plan: '180', startDate: null, groupName: '', readDays: {} },
       });
     }
+    ensureProfileSub(); // 초기화 저장(로컬 반영) 뒤 다시 구독 — 다른 기기의 암송·형광펜 변경을 계속 받도록
     volatile.groupData = null;
     volatile.members = [];
     render();

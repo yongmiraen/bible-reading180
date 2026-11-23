@@ -53,7 +53,7 @@ header{
 }
 header h1{font-size:1.15rem;margin:0;font-weight:700;letter-spacing:-.5px}
 .group-name{font-size:.82rem;color:var(--muted);margin-top:2px}
-.header-actions{display:flex;gap:6px;margin-left:auto}
+.header-actions{display:flex;gap:6px;margin-left:auto;flex-wrap:wrap;justify-content:flex-end}
 .icon-btn{
   min-width:50px;height:52px;padding:4px 6px;border-radius:12px;
   background:#fff;border:1px solid var(--line);
@@ -569,6 +569,64 @@ header h1{font-size:1.15rem;margin:0;font-weight:700;letter-spacing:-.5px}
 /* 입력칸은 외곽선 대신 테두리+그림자로 포커스 표시 (메모·기도·댓글 textarea 포함) */
 input:focus,textarea:focus{outline:none;border-color:var(--accent) !important;box-shadow:0 0 0 3px var(--accent-soft)}
 
+/* === 성경암송 72구절 === */
+.memo-week-card{display:flex;align-items:center;gap:10px;width:100%;min-height:52px;margin:12px 0 4px;padding:12px 14px;
+  background:var(--card);border:1.5px solid var(--accent);border-radius:14px;color:var(--text);font-size:.95rem;text-align:left;box-shadow:var(--shadow)}
+.memo-week-card span:first-child{font-weight:700;color:var(--accent);white-space:nowrap}
+.memo-week-card span:nth-child(2){flex:1;min-width:0}
+.memo-week-card span:last-child{font-size:1.3rem;color:var(--accent)}
+.memo-top{display:flex;align-items:center;justify-content:space-between;gap:8px}
+.memo-total{font-size:.88rem;color:var(--muted);font-variant-numeric:tabular-nums}
+.memo-title{font-size:1.2rem;margin:4px 0 10px}
+.memo-tabs{display:flex;gap:6px;margin:0 0 12px;flex-wrap:wrap}
+.memo-tab{flex:1;min-height:44px;padding:0 10px;border-radius:12px;border:1.5px solid var(--line);background:#fff;color:var(--muted);font-weight:700;font-size:.92rem}
+.memo-tab.active{background:var(--accent);border-color:var(--accent);color:#fff}
+.memo-week-status{font-size:.95rem;font-weight:600;color:var(--text);margin:4px 2px 12px;line-height:1.5}
+.memo-card{background:var(--card);border:1px solid var(--line);border-radius:16px;padding:16px;margin-bottom:14px;box-shadow:var(--shadow)}
+.memo-card.review{border:2px solid var(--gold)}
+.memo-card-head{margin-bottom:8px}
+.memo-topic{font-size:.82rem;color:var(--muted)}
+.memo-ref{font-size:1.1rem;font-weight:800;color:var(--accent);margin-top:2px}
+.memo-part{display:inline-block;font-size:.8rem;font-weight:700;color:#fff;background:var(--accent);border-radius:99px;padding:1px 9px;margin-left:4px;vertical-align:2px}
+.memo-text{font-size:var(--verse-size,18px);line-height:1.8;margin:6px 0 4px;word-break:keep-all}
+.memo-guide{font-size:.82rem;color:var(--muted);margin:4px 0 10px}
+.memo-hidden{background:var(--accent-soft);border:1.5px dashed var(--accent);border-radius:12px;padding:14px;margin:6px 0 10px}
+.memo-hidden p{margin:0;color:var(--muted);font-size:.9rem}
+.memo-hint{margin-top:8px !important;color:var(--text) !important;font-size:var(--verse-size,18px) !important;line-height:1.7;font-weight:600}
+.memo-actions{display:flex;gap:8px;flex-wrap:wrap;margin:8px 0 0}
+.memo-btn{flex:1 1 auto;min-height:48px;padding:0 14px;border-radius:12px;border:1.5px solid var(--line);background:#fff;font-weight:700;font-size:.95rem;color:var(--text)}
+.memo-btn.primary-btn{background:var(--accent);border-color:var(--accent);color:#fff}
+.memo-btn:disabled{opacity:.4}
+.memo-mem{display:block;width:100%;min-height:52px;margin-top:14px;border-radius:12px;border:2px solid var(--good);background:#fff;color:var(--good);font-weight:800;font-size:1rem}
+.memo-mem.done{background:var(--good);color:#fff}
+.memo-start-row{display:flex;gap:8px;align-items:flex-end;flex-wrap:wrap;margin:0 0 12px}
+.memo-start-row label{flex:1 1 180px;font-size:.88rem;color:var(--muted)}
+.memo-start-row .memo-btn{flex:0 0 auto}
+.memo-start{margin-top:4px}
+.memo-sub{font-size:1rem;margin:18px 0 8px}
+.memo-review-btn{display:block;width:100%;min-height:48px;margin:6px 0 10px;border-radius:12px;border:1.5px solid var(--gold);background:#fffbeb;color:#78350f;font-weight:700;font-size:.92rem}
+.memo-set{background:var(--card);border:1px solid var(--line);border-radius:14px;margin-bottom:10px;overflow:hidden}
+.memo-set-head{display:flex;justify-content:space-between;align-items:center;width:100%;min-height:52px;padding:0 16px;font-weight:700;font-size:1rem;text-align:left}
+.memo-set-count{color:var(--muted);font-variant-numeric:tabular-nums;font-size:.9rem}
+.memo-set .memo-card{margin:0 10px 10px;box-shadow:none}
+.memo-item{display:flex;gap:12px;align-items:center;width:100%;min-height:52px;padding:8px 16px;border-top:1px solid var(--line);text-align:left}
+.memo-item span:last-child{display:flex;flex-direction:column}
+.memo-item small{color:var(--muted);font-size:.8rem}
+.memo-item.this-week{background:var(--accent-soft)}
+.memo-item-check{width:20px;color:var(--good);font-weight:800}
+.memo-member{background:var(--card);border:1px solid var(--line);border-radius:14px;margin-bottom:8px;overflow:hidden}
+.memo-member.me{border-color:var(--accent)}
+.memo-member-head{display:grid;grid-template-columns:1fr auto auto;gap:10px;align-items:center;width:100%;min-height:52px;padding:0 14px;text-align:left}
+.memo-member-name{font-weight:700;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.memo-member-week{color:var(--good);font-weight:800;letter-spacing:2px}
+.memo-member-count{color:var(--muted);font-variant-numeric:tabular-nums;font-size:.9rem;white-space:nowrap}
+.memo-member-detail{padding:4px 14px 12px;border-top:1px solid var(--line);font-size:.88rem}
+.memo-member-set{margin-top:8px}
+.memo-member-verses{display:flex;flex-wrap:wrap;gap:4px 10px;margin-top:4px;color:var(--muted)}
+.memo-member-verses .on{color:var(--good);font-weight:600}
+.memo-source{font-size:.8rem;color:var(--muted);text-align:center;margin:20px 0 6px}
+.memo-done{background:#f0fdf4;border:1px solid #bbf7d0;color:#14532d;border-radius:12px;padding:12px 14px;font-weight:700;margin:0 0 12px}
+
 /* Wide screens */
 @media (min-width:520px){
   .day-num{font-size:1.15rem}
@@ -618,6 +676,8 @@ input:focus,textarea:focus{outline:none;border-color:var(--accent) !important;bo
   <script src="https://www.gstatic.com/firebasejs/10.13.2/firebase-firestore-compat.js"></script>
   <script src="https://www.gstatic.com/firebasejs/10.13.2/firebase-analytics-compat.js"></script>
   <script src="firebase-config.js"></script>
+  <script src="memorize-data.js"></script>
+  <script src="lib/memorize-logic.js"></script>
   <script src="groups.js"></script>
   <script src="lib/state-logic.js"></script>
   <script src="drama-bible.js"></script>
@@ -625,5 +685,6 @@ input:focus,textarea:focus{outline:none;border-color:var(--accent) !important;bo
   <script src="schedule-data-365.js"></script>
   <script src="bible/GAE.js"></script>
   <script src="app.js"></script>
+  <script src="memorize.js"></script>
 </body>
 </html>
