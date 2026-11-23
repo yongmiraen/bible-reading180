@@ -111,11 +111,13 @@ module.exports = async function memorizeScenarios({ d, page, step, tap, audit, s
     const vp = page.viewportSize();
     await page.setViewportSize({ width: 320, height: 640 });
     await page.evaluate(() => { state.fontSize = 24; saveState(); render(); });
+    // 카드별 연습 상태가 유지되므로(앞 단계 '처음부터 말하기'로 가려 둠) 먼저 펼친다
+    if (await page.$(`${card('갈2:20')} [data-act="show"]`)) await act('갈2:20', 'show');
     await act('갈2:20', 'chunk'); await wait(150);
     const a = await audit(page, '암송 320px');
     const header = await page.$eval('.header-actions', e => { const r = e.getBoundingClientRect(); return r.right <= innerWidth + 1; });
     await shot('memo-04-320');
-    await act('갈2:20', 'whole');
+    await act('갈2:20', 'whole'); await act('갈2:20', 'show');
     await page.evaluate(() => { state.fontSize = 18; saveState(); render(); });
     await page.setViewportSize(vp);
     if (a.overflowX > 0 || a.offscreen.length || !header) throw new Error(JSON.stringify(a));
@@ -127,6 +129,121 @@ module.exports = async function memorizeScenarios({ d, page, step, tap, audit, s
     await page.goBack(); await page.waitForSelector('.passage-card', { timeout: 3000 });
     if (!/1주차/.test(txt)) throw new Error(txt);
   });
+  // ── 최종 리뷰 지적 수정 검증 ──
+  await step('리뷰: 연습 상태는 카드마다 따로 (두 번째 카드를 가려도 첫 카드는 가린 채)', async () => {
+    await tap('#memoBtn'); await page.waitForSelector(card('고후5:17'));
+    await act('고후5:17', 'hide'); await act('갈2:20', 'hide'); await wait(150);
+    const s = await page.evaluate(() => [...document.querySelectorAll('.memo-card')].map(c => !!c.querySelector('.memo-text')));
+    await act('고후5:17', 'show'); await act('갈2:20', 'show');
+    if (s[0] || s[1]) throw new Error(JSON.stringify(s));
+  });
+  await step('리뷰: 힌트를 끝까지 보면 힌트 버튼 비활성', async () => {
+    await act('고후5:17', 'hide');
+    const n = await page.evaluate(() => MemorizeLogic.words(memoText(MEMO_BY_ID['고후5:17'])).length);
+    for (let i = 0; i < n; i++) await act('고후5:17', 'hint');
+    const dis = await page.$eval(`${card('고후5:17')} [data-act="hint"]`, e => e.disabled);
+    await act('고후5:17', 'show');
+    if (!dis) throw new Error('활성 상태');
+  });
+  await step('리뷰: 듣기 재생 중 정지 버튼, 화면 떠나면 재생 멈춤', async () => {
+    await page.evaluate(() => {
+      window.__cancels = 0;
+      window.SpeechSynthesisUtterance = function (t) { this.text = t; };
+      const s = { speaking: false, getVoices: () => [{ lang: 'ko-KR', name: '모의' }], speak() { this.speaking = true; }, cancel() { this.speaking = false; window.__cancels++; }, addEventListener() {} };
+      Object.defineProperty(window, 'speechSynthesis', { configurable: true, value: s });
+      render();
+    });
+    await act('고후5:17', 'tts'); await wait(100);
+    const label = await page.$eval(`${card('고후5:17')} [data-act="tts"]`, e => e.textContent);
+    await act('고후5:17', 'tts'); await wait(100);
+    const stopped = await page.evaluate(() => !window.speechSynthesis.speaking);
+    await act('고후5:17', 'tts'); await wait(100);
+    await page.goBack(); await page.waitForSelector('.passage-card', { timeout: 3000 });
+    const afterLeave = await page.evaluate(() => !window.speechSynthesis.speaking);
+    await tap('#memoBtn'); await page.waitForSelector('.memo-screen');
+    if (!/정지/.test(label) || !stopped || !afterLeave) throw new Error(JSON.stringify({ label, stopped, afterLeave }));
+  });
+  await step('리뷰: 다시 외우면 복습 일정 새로 시작, 해제 실패 시 일정 유지', async () => {
+    const K = 'memorize_review_v1_u-tester';
+    await page.evaluate(k => localStorage.setItem(k, JSON.stringify({ '롬12:1': { intervalStep: 4, nextReviewOn: '2099-01-01' } })), K);
+    await page.evaluate(() => toggleMemorized('롬12:1')); await wait(300);
+    const afterCheck = await page.evaluate(k => (JSON.parse(localStorage.getItem(k)) || {})['롬12:1'] || null, K);
+    await page.evaluate(k => localStorage.setItem(k, JSON.stringify({ '롬12:1': { intervalStep: 1, nextReviewOn: '2099-01-01' } })), K);
+    await page.evaluate(() => { window.__mockFail = { setMemorized: 'unavailable' }; });
+    await page.evaluate(() => toggleMemorized('롬12:1')); await wait(300);
+    const afterFail = await page.evaluate(k => (JSON.parse(localStorage.getItem(k)) || {})['롬12:1'] || null, K);
+    await page.evaluate(() => { window.__mockFail = null; });
+    await page.evaluate(() => toggleMemorized('롬12:1')); await wait(300);
+    const afterUncheck = await page.evaluate(k => (JSON.parse(localStorage.getItem(k)) || {})['롬12:1'] || null, K);
+    if (afterCheck || !afterFail || afterUncheck) throw new Error(JSON.stringify({ afterCheck, afterFail, afterUncheck }));
+  });
+  await step('리뷰: 첫 로드가 서버 확인값이면 다른 기기에서 해제한 구절을 바로 반영', async () => {
+    await page.evaluate(() => {
+      const s = JSON.parse(localStorage.getItem('bible180_state_v2'));
+      s.memorized = Object.assign({}, s.memorized, { '요15:7': '2026-11-01' }); // 클라우드엔 없음
+      localStorage.setItem('bible180_state_v2', JSON.stringify(s));
+      localStorage.setItem('__mockSlowProfile', '1'); // 실시간 구독 스냅샷을 늦춰 첫 로드 경로만 검증
+    });
+    await page.reload(); await page.waitForSelector('header', { timeout: 15000 }); await wait(400);
+    const has = await page.evaluate(() => !!state.memorized['요15:7']);
+    await page.evaluate(() => localStorage.removeItem('__mockSlowProfile'));
+    await page.reload(); await page.waitForSelector('header', { timeout: 15000 });
+    if (has) throw new Error('첫 로드 후에도 남음');
+  });
+  await step('리뷰: 초대 링크 화면에서도 프로필 구독 유지, 참가 안 하고 돌아가도 유지', async () => {
+    await page.goto(page.url().split('?')[0] + '?join=ZZZ998'); await page.waitForSelector('#skipInviteBtn', { timeout: 15000 });
+    const onInvite = await page.evaluate(() => window.__mockExternal.listenerCount('u:u-tester'));
+    await tap('#skipInviteBtn'); await page.waitForSelector('header'); await wait(300);
+    const afterSkip = await page.evaluate(() => window.__mockExternal.listenerCount('u:u-tester'));
+    if (onInvite < 1 || afterSkip !== 1) throw new Error(JSON.stringify({ onInvite, afterSkip }));
+  });
+  await step('리뷰: 혼자 모드 암송 시작일 바꾸기', async () => {
+    await page.evaluate(() => { switchToSolo(); state.view = 'memorize'; saveState(); render(); });
+    if (await page.$('#memoSoloStart')) { await tap('#memoSoloStart'); await wait(200); }
+    const t = await page.evaluate(() => MemorizeLogic.addDays(todayLocalISO(), -7));
+    await page.fill('#memoStartInput', t); await tap('#memoStartSave'); await wait(300);
+    const s = await page.evaluate(() => ({ local: state.memoStartSolo, cloud: (window.__mockExternal.db().users['u-tester'] || {}).memoStart, status: document.querySelector('.memo-week-status').textContent }));
+    await page.evaluate(() => { switchToGroup(); state.view = 'main'; saveState(); render(); });
+    await page.waitForSelector('.passage-card', { timeout: 5000 });
+    if (s.local !== t || s.cloud !== t || !/2주차/.test(s.status)) throw new Error(JSON.stringify(s));
+  });
+
+  await step('리뷰: 조장이 날짜를 고르는 중 동기화가 와도 입력값 유지', async () => {
+    await tap('#memoBtn'); await page.waitForSelector('.memo-screen');
+    await tap('.memo-tab[data-tab="board"]'); await page.waitForSelector('#memoStartInput');
+    await page.fill('#memoStartInput', '2027-01-05'); await page.focus('#memoStartInput');
+    await page.evaluate(() => window.__mockExternal.otherMemorizes('TEST01', '마18:20', '2026-11-20')); await wait(300);
+    const v = await page.$eval('#memoStartInput', e => e.value);
+    await page.evaluate(() => { document.activeElement.blur(); window.__mockExternal.otherMemorizes('TEST01', '마18:20', null); });
+    await tap('.memo-tab[data-tab="week"]');
+    if (v !== '2027-01-05') throw new Error(v);
+  });
+  await step('리뷰: 혼자 모드로 바꾸면 조원 현황이 보이지 않음', async () => {
+    await page.evaluate(() => { volatile.memo.tab = 'board'; switchToSolo(); state.view = 'memorize'; saveState(); render(); });
+    const leaked = await page.$('.memo-member');
+    const tab = await page.$eval('.memo-tab.active', e => e.dataset.tab);
+    await page.evaluate(() => { switchToGroup(); state.view = 'main'; saveState(); render(); });
+    await page.waitForSelector('.passage-card', { timeout: 5000 });
+    if (leaked || tab === 'board') throw new Error(JSON.stringify({ leaked: !!leaked, tab }));
+  });
+  await step('리뷰: 조 모드 프로필 스냅샷이 혼자 진도 정보를 빈 값으로 덮지 않음', async () => {
+    const s = await page.evaluate(async () => {
+      state.soloStash = Object.assign({}, state.soloStash, { plan: '365', startDate: '2026-01-01', groupName: '내 통독' });
+      await Groups.saveProfile(volatile.userId, { solo: { readDays: {} } }); // 클라우드 solo에 plan·startDate 없음
+      await new Promise(r => setTimeout(r, 200));
+      return { plan: state.soloStash.plan, startDate: state.soloStash.startDate };
+    });
+    if (s.plan !== '365' || s.startDate !== '2026-01-01') throw new Error(JSON.stringify(s));
+  });
+  await step('리뷰: 잘못된 혼자 시작일 값은 무시하고 화면에 그대로 넣지 않음', async () => {
+    const s = await page.evaluate(async () => {
+      await Groups.saveProfile(volatile.userId, { memoStart: '"><img src=x onerror=window.__xss2=1>' });
+      await new Promise(r => setTimeout(r, 200));
+      return { v: state.memoStartSolo, xss: !!window.__xss2 };
+    });
+    if (s.v !== null || s.xss) throw new Error(JSON.stringify(s));
+  });
+
   // 정리: 다른 조원 외운 구절 원복(Task 6 시나리오 전제)
   await page.evaluate(() => window.__mockExternal.otherMemorizes('TEST01', '갈2:20', null));
 

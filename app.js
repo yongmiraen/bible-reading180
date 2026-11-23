@@ -176,6 +176,11 @@ function normalizeFlatSolo(data) {
   return null;
 }
 
+// 프로필 구독이 없으면 건다 — 조 만들기·참가·초대 건너뛰기·초기화 등 어느 경로에서도 이것만 부른다
+function ensureProfileSub() {
+  if (!soloUnsub && volatile.userId && isGoogleLinked()) subscribeSolo();
+}
+
 // 프로필 Firestore 구독 — 혼자·조 모드 모두 유지 (암송 원본·형광펜·메모는 모드와 무관한 개인 데이터)
 function subscribeSolo() {
   if (soloUnsub) { soloUnsub(); soloUnsub = null; }
@@ -207,7 +212,14 @@ function subscribeSolo() {
         if (JSON.stringify(mergedRead) !== JSON.stringify(state.readDays)) { state.readDays = mergedRead; changed = true; }
         state.soloStash = { plan: state.plan, startDate: state.startDate, groupName: state.groupName, readDays: { ...mergedRead } };
       } else {
-        state.soloStash = { plan: cs.plan, startDate: cs.startDate, groupName: cs.groupName, readDays: mergedRead };
+        // 조 모드: 클라우드에 값이 없으면 기존 보관값을 지키고(빈 값으로 덮지 않게), 읽음은 합집합
+        const prev = state.soloStash || {};
+        state.soloStash = {
+          plan: cs.plan || prev.plan || '180',
+          startDate: cs.startDate || prev.startDate || null,
+          groupName: cs.groupName !== undefined ? cs.groupName : (prev.groupName || ''),
+          readDays: mergedRead,
+        };
       }
     }
     if (changed) { saveState(); renderFromSync(); }
@@ -228,7 +240,8 @@ function applyMemorizedFromCloud(data, meta) {
   state.memorized = next;
   if (confirmed) {
     volatile.memorizedConfirmed = true;
-    const ms = (data && data.memoStart) || null;
+    const raw = data && data.memoStart;
+    const ms = typeof raw === 'string' && /^\d{4}-\d{2}-\d{2}$/.test(raw) ? raw : null; // 형식이 다르면 무시
     if (ms !== state.memoStartSolo) { state.memoStartSolo = ms; changed = true; }
   }
   return changed;
@@ -239,14 +252,14 @@ const RECONCILE_BACKOFF = [5000, 30000, 120000];
 const _reconcile = { running: false, again: false, attempt: 0, timer: null, blocked: false };
 function scheduleReconcile(reason) {
   const gid = (state.groupRef && state.groupRef.groupId) || state.groupId;
-  if (!gid || !volatile.userId || !isGoogleLinked() || !Groups.reconcileMemorized || _reconcile.blocked) return;
+  if (!gid || !volatile.userId || !isGoogleLinked() || !Groups.reconcileMemorized || _reconcile.blocked === gid) return;
   if (_reconcile.running) { _reconcile.again = true; return; }
   _reconcile.running = true;
   clearTimeout(_reconcile.timer);
   Groups.reconcileMemorized(gid, volatile.userId, MEMO_IDS).then(() => {
     _reconcile.attempt = 0;
   }, e => {
-    if (e && e.code === 'permission-denied') { _reconcile.blocked = true; return; } // 로그인·권한이 바뀔 때까지 중단
+    if (e && e.code === 'permission-denied') { _reconcile.blocked = gid; return; } // 이 조만, 로그인·권한이 바뀔 때까지 중단
     const wait = RECONCILE_BACKOFF[Math.min(_reconcile.attempt, RECONCILE_BACKOFF.length - 1)];
     _reconcile.attempt++;
     _reconcile.timer = setTimeout(() => scheduleReconcile('retry'), wait);
@@ -256,7 +269,7 @@ function scheduleReconcile(reason) {
   });
 }
 window.addEventListener('online', () => { _reconcile.attempt = 0; scheduleReconcile('online'); });
-if (window.Groups && Groups.onAuthChange) Groups.onAuthChange(() => { _reconcile.blocked = false; });
+if (window.Groups && Groups.onAuthChange) Groups.onAuthChange(() => { _reconcile.blocked = null; });
 
 // 새 조원 문서에 넣을 암송 사본: 서버가 확인한 원본을 받은 뒤에만 (아니면 생략 → 맞춰 쓰기가 채움)
 function memorizedForNewMember() {
@@ -273,9 +286,15 @@ async function toggleMemorized(id) {
   if (date) state.memorized[id] = date; else delete state.memorized[id];
   saveState();
   renderFromSync();
-  if (!date && typeof memoClearReview === 'function') memoClearReview(id); // 해제하면 복습 일정도 지움
-  if (!volatile.userId || !isGoogleLinked()) return { ok: true };
+  // 새로 외우면 이전 복습 일정은 버리고 처음부터 (다른 기기에서 해제했던 구절 포함)
+  if (date && typeof memoClearReview === 'function') memoClearReview(id);
+  if (!volatile.userId || !isGoogleLinked()) {
+    if (!date && typeof memoClearReview === 'function') memoClearReview(id);
+    return { ok: true };
+  }
   const r = await Groups.setMemorized(volatile.userId, id, date);
+  // 해제는 저장이 확정된 뒤에만 복습 일정을 지운다 (실패해 되돌리면 일정도 그대로)
+  if (r && r.ok && !date && typeof memoClearReview === 'function') memoClearReview(id);
   if (!r || !r.ok) {
     state.memorized = Object.assign({}, state.memorized);
     if (was) state.memorized[id] = was; else delete state.memorized[id];
@@ -605,6 +624,8 @@ function toggleRead(day) {
 // === 그룹 구독 ===
 function subscribeToGroup() {
   if (!state.groupId) return;
+  volatile.membersGroup = null; // 같은 조를 다시 구독해도 첫 스냅샷에서 암송 사본을 맞추도록
+  if (_reconcile.blocked === state.groupId) _reconcile.blocked = null; // 재참가 등으로 권한이 바뀌었을 수 있음
   Groups.subscribeGroup(state.groupId,
     (groupData) => {
       if (!groupData) {
@@ -654,7 +675,8 @@ function isUserTyping() {
   const app = document.getElementById('app');
   if (!ae || !app || !app.contains(ae)) return false;
   if (ae.tagName === 'TEXTAREA') return true;
-  return ae.tagName === 'INPUT' && /^(text|email|search|tel|url|)$/.test(ae.type || '');
+  // date 포함: 조장이 암송 시작일을 고르는 중에 동기화로 다시 그려 값이 사라지지 않게
+  return ae.tagName === 'INPUT' && /^(text|email|search|tel|url|date|)$/.test(ae.type || '');
 }
 function renderFromSync() {
   if (isUserTyping()) { _pendingSyncRender = true; return; }
@@ -777,7 +799,7 @@ function switchToGroup() {
     saveState();
     persistActiveMode();
     subscribeToGroup();
-    if (!soloUnsub) subscribeSolo();
+    ensureProfileSub();
     scheduleReconcile('switch-group');
     render();
   } else {
@@ -864,31 +886,32 @@ async function init() {
   // 4초 안에 안 오면 일단 진행하되, 늦게 도착한 프로필도 반영한다(느린 모바일 망).
   // 리스너는 init 끝(구독 시작 후)에 해제 → 같은 문서를 다시 구독할 때 읽기 중복 없음.
   let profileUnsub = null, profileTimedOut = false;
-  const rawCloud = await new Promise((resolve) => {
+  const first = await new Promise((resolve) => {
     let done = false;
-    profileUnsub = Groups.watchProfile(volatile.userId, (d) => {
-      if (!done) { done = true; resolve(d); return; }
+    profileUnsub = Groups.watchProfile(volatile.userId, (d, meta) => {
+      if (!done) { done = true; resolve({ d, meta }); return; }
       if (profileTimedOut) {
         profileTimedOut = false;
         const wasSetUp = isSetUp();
-        applyCloudProfile(d);
+        applyCloudProfile(d, meta);
         if (profileUnsub) { profileUnsub(); profileUnsub = null; }
         if (!wasSetUp && isSetUp()) {
           if (state.mode === 'group' && state.groupId) subscribeToGroup();
-          subscribeSolo();
+          ensureProfileSub();
           render();
         }
       }
     });
-    setTimeout(() => { if (!done) { done = true; profileTimedOut = true; resolve(null); } }, 4000);
+    setTimeout(() => { if (!done) { done = true; profileTimedOut = true; resolve({ d: null, meta: null }); } }, 4000);
   });
-  applyCloudProfile(rawCloud);
+  const rawCloud = first.d;
+  applyCloudProfile(rawCloud, first.meta);
   // 늦게 올 프로필을 기다리는 중이 아니면, 아래 구독이 시작된 뒤 리스너 해제
   setTimeout(() => { if (!profileTimedOut && profileUnsub) { profileUnsub(); profileUnsub = null; } }, 0);
   initAfterProfile();
 }
 
-function applyCloudProfile(rawCloud) {
+function applyCloudProfile(rawCloud, meta) {
   try {
     let cloudForMerge = rawCloud;
     if (rawCloud && !rawCloud.solo) {
@@ -900,8 +923,8 @@ function applyCloudProfile(rawCloud) {
     state.groupRef = state.groupRef || merged.groupRef;
     if (rawCloud && rawCloud.highlights) state.highlights = rawCloud.highlights;
     if (rawCloud && rawCloud.memos) state.memos = rawCloud.memos;
-    // 암송: 첫 로드 값은 서버 확인 여부를 모르므로 병합만 (확정 교체는 실시간 구독의 서버 확인 스냅샷에서)
-    if (rawCloud) applyMemorizedFromCloud(rawCloud, { fromCache: true });
+    // 암송: 서버가 확인한 첫 값이면 그대로 교체(다른 기기에서 해제한 구절을 바로 반영), 캐시·시간 초과면 병합만
+    applyMemorizedFromCloud(rawCloud, meta && !meta.fromCache && !meta.hasPendingWrites ? meta : { fromCache: true });
 
     const locallySetUp = (state.mode === 'group' && state.groupId) || (state.mode === 'solo' && state.startDate);
     const cloudActiveMode = rawCloud && rawCloud.activeMode ? rawCloud.activeMode : merged.activeMode;
@@ -948,6 +971,9 @@ function initAfterProfile() {
     }
   });
 
+  // 프로필(암송 원본·형광펜·메모·혼자 진도) 구독은 모드·화면과 무관하게 유지 (초대 화면 포함)
+  ensureProfileSub();
+
   if (pendingInviteCode) {
     state.view = 'join-from-link';
     render();
@@ -955,8 +981,6 @@ function initAfterProfile() {
   }
 
   if (state.mode === 'group' && state.groupId) subscribeToGroup();
-  // 프로필(암송 원본·형광펜·메모·혼자 진도) 구독은 모드와 무관하게 유지
-  if (isGoogleLinked()) subscribeSolo();
   render();
 }
 
@@ -978,6 +1002,8 @@ let _lastPageKey = null;
 function render() {
   const app = document.getElementById('app');
   _pendingSyncRender = false;
+  // 암송 화면을 떠나면(뒤로가기·기도 탭·모드 전환 등 모든 경로) 듣기 재생을 멈춘다
+  if (state.view !== 'memorize' && volatile.memo && volatile.memo.speakingKey && typeof memoStopSpeech === 'function') memoStopSpeech();
 
   if (!volatile.authReady) {
     app.innerHTML = '<div class="setup"><h1>📖 성경 통독</h1><p class="lead">불러오는 중...</p></div>';
@@ -1551,6 +1577,7 @@ function bindCreateForm() {
       state.view = 'invite-share';
       saveState();
       subscribeToGroup();
+      ensureProfileSub();
       render();
     } catch (e) {
       btn.disabled = false; btn.textContent = '조 만들기';
@@ -1592,7 +1619,7 @@ function bindJoinForm(fromLink) {
       state.view = 'main';
       saveState();
       if (state.mode === 'group' && state.groupId) subscribeToGroup();
-      else if (state.mode === 'solo' && isGoogleLinked()) subscribeSolo();
+      ensureProfileSub(); // 혼자·조 모드 모두 프로필 구독 유지
       render();
     };
   }
@@ -1617,7 +1644,7 @@ function bindJoinForm(fromLink) {
       state.viewDay = null;
       saveState();
       subscribeToGroup();
-      if (!soloUnsub) subscribeSolo();
+      ensureProfileSub();
       render();
     } catch (e) {
       btn.disabled = false; btn.textContent = '참가하기';
@@ -2656,6 +2683,7 @@ function bindSettings() {
         solo: { plan: '180', startDate: null, groupName: '', readDays: {} },
       });
     }
+    ensureProfileSub(); // 초기화 저장(로컬 반영) 뒤 다시 구독 — 다른 기기의 암송·형광펜 변경을 계속 받도록
     volatile.groupData = null;
     volatile.members = [];
     render();

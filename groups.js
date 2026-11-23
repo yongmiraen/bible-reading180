@@ -339,7 +339,7 @@
   }
 
   // 현재 조의 내 조원 문서 사본을 원본에 맞춘다 (서버 트랜잭션: 두 기기가 엇갈려도 최신 원본 기준)
-  // 반환: 'updated' | 'same' | 'no-member'
+  // 반환: 'updated' | 'same' | 'no-member' | 'not-current'
   async function reconcileMemorized(groupId, uid, validIds) {
     const L = window.MemorizeLogic;
     const userRef = db.collection('users').doc(uid);
@@ -347,7 +347,11 @@
     return db.runTransaction(async tx => {
       const [userSnap, memberSnap] = [await tx.get(userRef), await tx.get(memberRef)];
       if (!memberSnap.exists) return 'no-member';
-      const orig = L.normalizeMemorized(userSnap.exists ? userSnap.data().memorized : null, validIds);
+      const profile = userSnap.exists ? userSnap.data() : {};
+      // 서버 프로필의 현재 조가 이 조가 아니면(다른 기기에서 조를 옮김·나감) 이전 조 사본은 더 갱신하지 않는다.
+      // groupRef 필드 자체가 없는 예전 프로필은 허용.
+      if ('groupRef' in profile && (!profile.groupRef || profile.groupRef.groupId !== groupId)) return 'not-current';
+      const orig = L.normalizeMemorized(profile.memorized, validIds);
       const copy = memberSnap.data().memorized || {};
       if (L.sameMemorized(orig, copy)) return 'same';
       tx.update(memberRef, { memorized: orig, updatedAt: firebase.firestore.FieldValue.serverTimestamp() });

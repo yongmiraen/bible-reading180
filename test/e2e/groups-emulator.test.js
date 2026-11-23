@@ -96,6 +96,26 @@ test('reconcile: 조원 문서 없으면 no-member, 문서 생성 안 됨', asyn
   assert.strictEqual(await member(d, code), null);
 });
 
+test('reconcile: 프로필의 현재 조(groupRef)가 다른 조면 not-current, 이전 조 사본은 그대로', async () => {
+  const d = await device();
+  const code = await newGroup(d);
+  await run(d, uid => Groups.setMemorized(uid, '고후5:17', '2026-11-23'), d.uid);
+  await reconcile(d, code);
+  // 다른 기기에서 다른 조로 옮김 → 프로필 groupRef가 바뀜
+  await run(d, uid => Groups.saveProfile(uid, { groupRef: { groupId: 'OTHER1', displayName: '홍길동' } }), d.uid);
+  await run(d, uid => Groups.setMemorized(uid, '갈2:20', '2026-11-24'), d.uid);
+  assert.strictEqual(await reconcile(d, code), 'not-current');
+  assert.deepStrictEqual((await member(d, code)).memorized, { '고후5:17': '2026-11-23' });
+});
+
+test('reconcile: 프로필 groupRef가 null(조 나감)이어도 not-current', async () => {
+  const d = await device();
+  const code = await newGroup(d);
+  await run(d, uid => Groups.saveProfile(uid, { groupRef: null }), d.uid);
+  await run(d, uid => Groups.setMemorized(uid, '고후5:17', '2026-11-23'), d.uid);
+  assert.strictEqual(await reconcile(d, code), 'not-current');
+});
+
 test('reconcile: 등록 안 된 id·잘못된 값은 사본에서 빠짐', async () => {
   const d = await device();
   const code = await newGroup(d);

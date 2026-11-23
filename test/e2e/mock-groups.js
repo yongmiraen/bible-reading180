@@ -82,7 +82,15 @@
     async signOutToAnonymous() { return user; },
     watchSoloData(u, cb) { const x = on('u:' + u, cb); setTimeout(() => cb(userDoc(u), META), 0); return x; },
     async saveSoloData(u, data) { db.users[u] = { ...(db.users[u] || {}), ...clone(data) }; count('saveSoloData', data); persist(); emitUser(u); },
-    watchProfile(u, cb) { const x = on('u:' + u, cb); setTimeout(() => cb(userDoc(u), META), 0); return x; },
+    // localStorage.__mockSlowProfile='1'이면 두 번째 구독부터 첫 스냅샷을 2.5초 늦춤(초기 로드 경로만 따로 검증)
+    watchProfile(u, cb) {
+      const n = (stats.watchProfileCalls = (stats.watchProfileCalls || 0) + 1);
+      const slow = localStorage.getItem('__mockSlowProfile') === '1' && n > 1;
+      let live = !slow;
+      const x = on('u:' + u, (...a) => { if (live) cb(...a); });
+      setTimeout(() => { live = true; cb(userDoc(u), META); }, slow ? 2500 : 0);
+      return x;
+    },
     // 실제 groups.js 의미론: set(mergeFields) → 보낸 최상위 필드만 통째로 교체
     async saveProfile(u, patch) { const p = clone(patch); delete p.previousUids; db.users[u] = Object.assign(db.users[u] || {}, p); count('saveProfile', patch); persist(); emitUser(u); return true; },
     async setProfileMapKeys(u, field, entries) {
@@ -101,6 +109,8 @@
     async reconcileMemorized(c, u, validIds) {
       const mem = (db.members[c] || {})[u];
       if (!mem) return 'no-member';
+      const prof = db.users[u] || {};
+      if ('groupRef' in prof && (!prof.groupRef || prof.groupRef.groupId !== c)) return 'not-current';
       const Lg = window.MemorizeLogic;
       const orig = Lg ? Lg.normalizeMemorized((db.users[u] || {}).memorized, validIds) : clone((db.users[u] || {}).memorized || {});
       const same = Lg ? Lg.sameMemorized(orig, mem.memorized || {}) : JSON.stringify(orig) === JSON.stringify(mem.memorized || {});
@@ -129,6 +139,7 @@
       db.members[c] = { 'u-other': { displayName: '다른조장', plan: '180', readDays: {} } };
       persist();
     },
+    listenerCount: k => (L[k] || []).length,
     db: () => clone(db),
   };
 })();
