@@ -5,7 +5,7 @@ const path = require('path');
 const { webkit, chromium, devices } = require('playwright');
 
 const ROOT = path.join(__dirname, '..', '..');
-const PORT = 8765;
+const PORT = +process.env.E2E_PORT || 8765; // 체험용 서버 등과 겹치면 E2E_PORT로 바꾼다
 const BASE = `http://127.0.0.1:${PORT}/index.html`;
 
 const DEVICES = [
@@ -36,7 +36,7 @@ function startServer() {
 async function routeMocks(ctx) {
   await ctx.route(/gstatic\.com\/firebasejs\/.*-app-compat\.js/, r => r.fulfill({ path: path.join(__dirname, 'mock-firebase.js'), contentType: 'text/javascript' }));
   await ctx.route(/gstatic\.com\/firebasejs\//, r => r.fulfill({ body: '', contentType: 'text/javascript' }));
-  await ctx.route(/127\.0\.0\.1:8765\/groups\.js$/, r => r.fulfill({ path: path.join(__dirname, 'mock-groups.js'), contentType: 'text/javascript' }));
+  await ctx.route(new RegExp(`127\\.0\\.0\\.1:${PORT}/groups\\.js$`), r => r.fulfill({ path: path.join(__dirname, 'mock-groups.js'), contentType: 'text/javascript' }));
   await ctx.route(/formspree\.io/, r => r.fulfill({ status: 200, body: '{"ok":true}', contentType: 'application/json' }));
 }
 

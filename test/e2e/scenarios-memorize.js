@@ -33,8 +33,9 @@ module.exports = async function memorizeScenarios({ d, page, step, tap, audit, s
   });
   await step('가리고 말하기 → 본문 숨김, 주소·소주제 보임', async () => {
     await act('고후5:17', 'hide'); await wait(150);
-    const s = await page.$eval(card('고후5:17'), e => ({ text: !!e.querySelector('.memo-text'), ref: e.querySelector('.memo-ref').textContent, topic: !!e.querySelector('.memo-topic'), leaked: e.textContent.includes('새로운 피조물') }));
-    if (s.text || s.leaked || !/고린도후서 5:17/.test(s.ref) || !s.topic) throw new Error(JSON.stringify(s));
+    const s = await page.$eval(card('고후5:17'), e => ({ text: !!e.querySelector('.memo-text'), ref: e.querySelector('.memo-ref').textContent, leaked: e.textContent.includes('새로운 피조물') }));
+    const status = await page.$eval('.memo-week-status', e => e.textContent); // 소주제는 위 주차 줄에 보임
+    if (s.text || s.leaked || !/고린도후서 5:17/.test(s.ref) || !/중심되신 그리스도/.test(status)) throw new Error(JSON.stringify({ s, status }));
   });
   await step('힌트 2번 → 두 어절 + …, 다시 가리기 → 초기화', async () => {
     await act('고후5:17', 'hint'); await act('고후5:17', 'hint'); await wait(100);
@@ -71,19 +72,15 @@ module.exports = async function memorizeScenarios({ d, page, step, tap, audit, s
     const after = await page.$eval(`${card('고후5:17')} [data-act="mem"]`, e => e.getAttribute('aria-pressed'));
     if (pressed !== 'true' || !/외웠어요/.test(toastTxt) || !/1\s*\/\s*12/.test(cnt) || after !== 'false') throw new Error(JSON.stringify({ pressed, toastTxt, cnt, after }));
   });
-  await step('듣기: 한국어 음성 없으면 버튼 없음, 있으면 본문 보일 때만', async () => {
+  await step('듣기 기능 없음(사용자 결정), 이번 주 카드엔 소주제 줄 없음(위 주차 줄과 중복)', async () => {
+    // 한국어 음성이 있는 기기여도 듣기 버튼이 없어야 한다
     await page.evaluate(() => {
-      window.__voices = [];
-      Object.defineProperty(window, 'speechSynthesis', { configurable: true, value: { getVoices: () => window.__voices, speak() {}, cancel() {}, addEventListener() {}, removeEventListener() {} } });
+      Object.defineProperty(window, 'speechSynthesis', { configurable: true, value: { getVoices: () => [{ lang: 'ko-KR', name: '모의 음성' }], speak() {}, cancel() {}, addEventListener() {} } });
       render();
     });
-    const none = await page.$(`${card('고후5:17')} [data-act="tts"]`);
-    await page.evaluate(() => { window.__voices = [{ lang: 'ko-KR', name: '모의 음성' }]; render(); });
-    const shown = await page.$(`${card('고후5:17')} [data-act="tts"]`);
-    await act('고후5:17', 'hide'); await wait(100);
-    const hiddenBtn = await page.$(`${card('고후5:17')} [data-act="tts"]`);
-    await act('고후5:17', 'show');
-    if (none || !shown || hiddenBtn) throw new Error(JSON.stringify({ none: !!none, shown: !!shown, hiddenBtn: !!hiddenBtn }));
+    const tts = await page.$$eval('[data-act="tts"]', a => a.length);
+    const topicInWeek = await page.$$eval('.memo-body > .memo-card .memo-topic', a => a.length);
+    if (tts || topicInWeek) throw new Error(JSON.stringify({ tts, topicInWeek }));
   });
   await step('조원 현황: N/72, 이번 주 2구절 ✓/○, 펼치면 묶음별', async () => {
     await tap('.memo-tab[data-tab="board"]'); await page.waitForSelector('.memo-member[data-uid="u-other"]', { timeout: 3000 });
@@ -144,24 +141,6 @@ module.exports = async function memorizeScenarios({ d, page, step, tap, audit, s
     const dis = await page.$eval(`${card('고후5:17')} [data-act="hint"]`, e => e.disabled);
     await act('고후5:17', 'show');
     if (!dis) throw new Error('활성 상태');
-  });
-  await step('리뷰: 듣기 재생 중 정지 버튼, 화면 떠나면 재생 멈춤', async () => {
-    await page.evaluate(() => {
-      window.__cancels = 0;
-      window.SpeechSynthesisUtterance = function (t) { this.text = t; };
-      const s = { speaking: false, getVoices: () => [{ lang: 'ko-KR', name: '모의' }], speak() { this.speaking = true; }, cancel() { this.speaking = false; window.__cancels++; }, addEventListener() {} };
-      Object.defineProperty(window, 'speechSynthesis', { configurable: true, value: s });
-      render();
-    });
-    await act('고후5:17', 'tts'); await wait(100);
-    const label = await page.$eval(`${card('고후5:17')} [data-act="tts"]`, e => e.textContent);
-    await act('고후5:17', 'tts'); await wait(100);
-    const stopped = await page.evaluate(() => !window.speechSynthesis.speaking);
-    await act('고후5:17', 'tts'); await wait(100);
-    await page.goBack(); await page.waitForSelector('.passage-card', { timeout: 3000 });
-    const afterLeave = await page.evaluate(() => !window.speechSynthesis.speaking);
-    await tap('#memoBtn'); await page.waitForSelector('.memo-screen');
-    if (!/정지/.test(label) || !stopped || !afterLeave) throw new Error(JSON.stringify({ label, stopped, afterLeave }));
   });
   await step('리뷰: 다시 외우면 복습 일정 새로 시작, 해제 실패 시 일정 유지', async () => {
     const K = 'memorize_review_v1_u-tester';

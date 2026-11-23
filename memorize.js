@@ -15,7 +15,6 @@ volatile.memo = volatile.memo || {
   allOpen: null,          // 전체 72 탭에서 펼친 연습 카드 id
   expandedSets: new Set(), expandedMember: null,
   reviewing: null,        // 복습 중인 구절 id
-  speakingKey: null,      // 듣기 재생 중인 카드
 };
 
 function memoState() { return volatile.memo; }
@@ -35,36 +34,6 @@ function memoWeek() { return MemorizeLogic.weekState(memoStartDate(), todayLocal
 function memoTopicVerses(topicIndex) { return MEMO_VERSES.filter(v => v.topicIndex === topicIndex); }
 function memoMonthDay(iso) { const [, m, d] = iso.split('-').map(Number); return `${m}월 ${d}일`; }
 
-// === 듣기 (기기 내장 한국어 음성이 있을 때만, 본문이 보일 때만) ===
-function memoKoVoice() {
-  const s = window.speechSynthesis;
-  if (!s || typeof s.getVoices !== 'function') return null;
-  try { return (s.getVoices() || []).find(v => /^ko/i.test(v.lang || '')) || null; } catch (e) { return null; }
-}
-function memoIsSpeaking(key) {
-  const s = window.speechSynthesis;
-  return !!(s && memoState().speakingKey === key && s.speaking !== false);
-}
-// 재생을 멈춘다 (화면 이동·부분 이동·가리기 때 호출; app.js render도 암송 화면을 떠나면 호출)
-function memoStopSpeech() {
-  const m = volatile.memo;
-  if (m) m.speakingKey = null;
-  try { if (window.speechSynthesis) window.speechSynthesis.cancel(); } catch (e) {}
-}
-function memoSpeak(key, text) {
-  const voice = memoKoVoice();
-  if (!voice || typeof SpeechSynthesisUtterance === 'undefined') return;
-  memoStopSpeech();
-  const u = new SpeechSynthesisUtterance(text);
-  u.voice = voice; u.lang = voice.lang; u.rate = 0.9;
-  u.onend = u.onerror = () => { if (memoState().speakingKey === key) { memoState().speakingKey = null; if (state.view === 'memorize') renderFromSync(); } };
-  memoState().speakingKey = key;
-  window.speechSynthesis.speak(u);
-}
-if (window.speechSynthesis && window.speechSynthesis.addEventListener) {
-  window.speechSynthesis.addEventListener('voiceschanged', () => { if (state.view === 'memorize') renderFromSync(); });
-}
-
 // === 복습 일정 (기기에만, 계정별) ===
 function memoReviewKey() { return 'memorize_review_v1_' + (volatile.userId || 'local'); }
 function memoReviewMap() { try { return JSON.parse(localStorage.getItem(memoReviewKey())) || {}; } catch (e) { return {}; } }
@@ -81,7 +50,8 @@ function memoDue() {
 
 // === 연습 카드 ===
 // scope: 'main'(이번 주·전체 72) | 'review'(복습) — 같은 구절이라도 복습 카드는 상태를 따로 가진다
-function renderMemoCard(v, scope) {
+// showTopic: 이번 주 탭은 위 주차 줄에 소주제가 있으므로 카드 안에서는 생략
+function renderMemoCard(v, scope, showTopic) {
   scope = scope || 'main';
   const key = `${scope}:${v.id}`;
   const c = memoCard(key);
@@ -90,18 +60,13 @@ function renderMemoCard(v, scope) {
   const chunked = c.chunked && parts.length > 1;
   const partText = chunked ? parts[Math.min(c.chunk, parts.length - 1)] : text;
   const done = !!state.memorized[v.id];
-  const speaking = memoIsSpeaking(key);
-  const tts = c.mode === 'read' && memoKoVoice();
   const hintMax = MemorizeLogic.words(partText).length;
   const btn = (a, label, cls, extra) => `<button class="memo-btn ${cls || ''}" data-act="${a}" ${extra || ''}>${label}</button>`;
   return `
     <div class="memo-card ${scope === 'review' ? 'review' : ''}" data-id="${escapeHtml(v.id)}" data-key="${escapeHtml(key)}">
       <div class="memo-card-head">
-        <div>
-          <div class="memo-topic">${escapeHtml(v.setId)}. ${escapeHtml(v.setTitle)} — ${escapeHtml(v.topicTitle)}</div>
-          <div class="memo-ref">${escapeHtml(v.label)}${chunked ? ` <span class="memo-part">${c.chunk + 1} / ${parts.length} 부분</span>` : ''}</div>
-        </div>
-        ${tts ? btn('tts', speaking ? '■ 정지' : '🔊 듣기', 'ghost small', `aria-pressed="${speaking}"`) : ''}
+        ${showTopic ? `<div class="memo-topic">${escapeHtml(v.setId)}. ${escapeHtml(v.setTitle)} — ${escapeHtml(v.topicTitle)}</div>` : ''}
+        <div class="memo-ref">${escapeHtml(v.label)}${chunked ? ` <span class="memo-part">${c.chunk + 1} / ${parts.length} 부분</span>` : ''}</div>
       </div>
       ${c.mode === 'read'
         ? `<div class="memo-text" style="--verse-size:${verseFontSize()}px">${escapeHtml(partText)}</div>
@@ -170,7 +135,7 @@ function renderMemoStartControl() {
 function renderMemoReview() {
   const m = memoState();
   if (m.reviewing && MEMO_BY_ID[m.reviewing] && state.memorized[m.reviewing]) {
-    return `<h3 class="memo-sub">복습</h3>${renderMemoCard(MEMO_BY_ID[m.reviewing], 'review')}`;
+    return `<h3 class="memo-sub">복습</h3>${renderMemoCard(MEMO_BY_ID[m.reviewing], 'review', true)}`;
   }
   if (!memoDue().length) return '';
   return `<button class="memo-review-btn" id="memoReviewBtn">🔁 복습할 구절이 있어요 · 1구절 복습하기</button>`;
@@ -187,7 +152,7 @@ function renderMemoAll() {
     const items = open ? vs.map(v => {
       const thisWeek = w.status === 'active' && v.topicIndex === w.topicIndex;
       return m.allOpen === v.id
-        ? renderMemoCard(v)
+        ? renderMemoCard(v, 'main', true)
         : `<button class="memo-item ${thisWeek ? 'this-week' : ''}" data-id="${escapeHtml(v.id)}">
              <span class="memo-item-check">${state.memorized[v.id] ? '✓' : '○'}</span>
              <span><b>${escapeHtml(v.label)}</b><small>${escapeHtml(v.topicTitle)}${thisWeek ? ' · 이번 주' : ''}</small></span>
@@ -272,7 +237,7 @@ function bindMemorize() {
   if ($('listBtn')) $('listBtn').onclick = () => { state.view = 'list'; saveState(); render(); };
   if ($('settingsBtn')) $('settingsBtn').onclick = () => { state.view = 'settings'; saveState(); render(); };
   if ($('membersBtn')) $('membersBtn').onclick = () => { state.view = 'members'; saveState(); render(); };
-  document.querySelectorAll('.memo-tab').forEach(b => b.onclick = () => { m.tab = b.dataset.tab; memoStopSpeech(); render(); });
+  document.querySelectorAll('.memo-tab').forEach(b => b.onclick = () => { m.tab = b.dataset.tab; render(); });
   if ($('memoSoloStart')) $('memoSoloStart').onclick = () => memoSaveSoloStart(todayLocalISO(), '암송을 시작했어요. 이번 주 2구절부터 함께 외워요');
   if ($('memoStartSave')) $('memoStartSave').onclick = async () => {
     const v = $('memoStartInput').value;
@@ -333,12 +298,6 @@ function memoCardAction(key, id, a) {
   const c = memoCard(key);
   const parts = MemorizeLogic.chunkTexts(memoText(v), v.chunks);
   const partText = c.chunked ? parts[Math.min(c.chunk, parts.length - 1)] : parts.join(' ');
-  if (a === 'tts') {
-    if (memoIsSpeaking(key)) memoStopSpeech(); else memoSpeak(key, partText);
-    render();
-    return;
-  }
-  if (m.speakingKey === key) memoStopSpeech(); // 카드 상태가 바뀌면 재생 중지
   if (a === 'hide') { c.mode = 'hidden'; c.revealed = 0; }
   else if (a === 'show') { c.mode = 'read'; }
   else if (a === 'rehide') { c.mode = 'hidden'; c.revealed = 0; }

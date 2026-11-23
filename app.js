@@ -1002,8 +1002,6 @@ let _lastPageKey = null;
 function render() {
   const app = document.getElementById('app');
   _pendingSyncRender = false;
-  // 암송 화면을 떠나면(뒤로가기·기도 탭·모드 전환 등 모든 경로) 듣기 재생을 멈춘다
-  if (state.view !== 'memorize' && volatile.memo && volatile.memo.speakingKey && typeof memoStopSpeech === 'function') memoStopSpeech();
 
   if (!volatile.authReady) {
     app.innerHTML = '<div class="setup"><h1>📖 성경 통독</h1><p class="lead">불러오는 중...</p></div>';
