@@ -4,7 +4,7 @@
   "description": "성경 통독 180일/365일 — 조원과 함께하는 통독·암송 PWA (빌드 없음, GitHub Pages)",
   "scripts": {
     "test": "node --test \"test/*.test.js\"",
-    "test:rules": "firebase emulators:exec --only firestore,auth \"node --test test/rules/*.test.js test/e2e/*.test.js\"",
+    "test:rules": "firebase emulators:exec --project demo-memorize --only firestore,auth \"node --test test/rules/*.test.js test/e2e/*.test.js\"",
     "test:e2e": "node test/e2e/run.js && node test/e2e/midnight.js"
   },
   "devDependencies": {
