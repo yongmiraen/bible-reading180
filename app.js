@@ -273,6 +273,7 @@ async function toggleMemorized(id) {
   if (date) state.memorized[id] = date; else delete state.memorized[id];
   saveState();
   renderFromSync();
+  if (!date && typeof memoClearReview === 'function') memoClearReview(id); // 해제하면 복습 일정도 지움
   if (!volatile.userId || !isGoogleLinked()) return { ok: true };
   const r = await Groups.setMemorized(volatile.userId, id, date);
   if (!r || !r.ok) {
@@ -661,7 +662,7 @@ function renderFromSync() {
 }
 // === 뒤로가기(Android 뒤로 버튼 / iOS 스와이프) ===
 // 하위 화면에 들어갈 때 history 항목을 쌓아, 뒤로가기가 앱 종료가 아닌 이전 화면으로 가게 한다.
-const VIEW_DEPTH = { list: 1, settings: 1, members: 1, prayer: 1, feedback: 2 };
+const VIEW_DEPTH = { list: 1, settings: 1, members: 1, prayer: 1, memorize: 1, feedback: 2 };
 const VIEW_PARENT = { feedback: 'settings' };
 let _ignorePop = 0;
 function isSetUp() {
@@ -1069,6 +1070,13 @@ function render() {
       return;
     }
   }
+  if (state.view === 'memorize' && typeof renderMemorize === 'function') {
+    app.innerHTML = renderMemorize();
+    bindMemorize();
+    if (samePage) window.scrollTo(0, prevScrollY);
+    else window.scrollTo(0, 0);
+    return;
+  }
   if (state.view === 'feedback') {
     app.innerHTML = renderFeedback();
     bindFeedback();
@@ -1327,6 +1335,7 @@ function renderHeader() {
       <div class="header-actions">
         ${state.mode === 'group' ? `<button class="icon-btn" id="prayerBtn" aria-label="기도제목"><span class="ib-ico" aria-hidden="true">🙏</span><span class="ib-txt">기도</span></button>` : ''}
         ${state.mode === 'group' ? `<button class="icon-btn" id="membersBtn" aria-label="조원 진도"><span class="ib-ico" aria-hidden="true">👥</span><span class="ib-txt">조원</span></button>` : ''}
+        <button class="icon-btn" id="memoBtn" aria-label="성경암송 72구절"><span class="ib-ico" aria-hidden="true">📖</span><span class="ib-txt">암송</span></button>
         <button class="icon-btn" id="listBtn" aria-label="전체 일정"><span class="ib-ico" aria-hidden="true">📅</span><span class="ib-txt">일정</span></button>
         <button class="icon-btn" id="settingsBtn" aria-label="설정"><span class="ib-ico" aria-hidden="true">⚙️</span><span class="ib-txt">설정</span></button>
       </div>
@@ -1742,6 +1751,7 @@ function renderMain() {
       <button class="share" id="shareBtn">📤 공유</button>
       <button class="copy" id="copyBtn">📋 본문 복사</button>
     </div>
+    ${typeof renderMemoWeekCard === 'function' ? renderMemoWeekCard() : ''}
     ${day > 1 ? `<button class="bulk-read-btn" id="bulkReadBtn">1~${day}일차를 모두 읽음으로 표시</button>` : ''}
     ${renderDayNav(day, realToday, isToday)}
   `;
