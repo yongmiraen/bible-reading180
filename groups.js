@@ -14,6 +14,14 @@
   firebase.initializeApp(window.FIREBASE_CONFIG);
   const auth = firebase.auth();
   const db = firebase.firestore();
+  // 개발·테스트용: window.FIREBASE_EMULATOR = { auth: 'http://127.0.0.1:9099', firestore: '127.0.0.1:8080' }
+  // 운영 페이지는 이 값을 정의하지 않는다.
+  if (window.FIREBASE_EMULATOR) {
+    const em = window.FIREBASE_EMULATOR;
+    auth.useEmulator(em.auth);
+    const [h, p] = em.firestore.split(':');
+    db.useEmulator(h, +p);
+  }
   // 광고 차단기 등으로 analytics 스크립트가 막혀도 앱(인증·동기화)은 동작해야 한다
   try { if (firebase.analytics) firebase.analytics(); } catch (e) { console.warn('analytics off', e); }
 
@@ -94,7 +102,7 @@
     return currentUser;
   }
 
-  async function createGroup({ name, startDate, displayName, plan }) {
+  async function createGroup({ name, startDate, displayName, plan, memorized }) {
     const user = await ensureSignedIn();
     let code;
     for (let i = 0; i < 10; i++) {
@@ -109,13 +117,16 @@
       owner: user.uid,
       createdAt: now
     });
-    await db.collection('groups').doc(code).collection('members').doc(user.uid).set({
+    const memberData = {
       displayName,
       plan: plan || '180',
       readDays: {},
       joinedAt: now,
       updatedAt: now
-    });
+    };
+    // 서버 확인된 암송 원본이 있을 때만 사본을 함께 넣는다(없으면 맞춰 쓰기가 나중에 채움)
+    if (memorized) memberData.memorized = memorized;
+    await db.collection('groups').doc(code).collection('members').doc(user.uid).set(memberData);
     return code;
   }
 
@@ -126,25 +137,28 @@
     return snap.data();
   }
 
-  async function joinGroup({ code, displayName, existingReadDays, plan }) {
+  async function joinGroup({ code, displayName, existingReadDays, plan, memorized }) {
     const user = await ensureSignedIn();
     const snap = await db.collection('groups').doc(code).get();
     if (!snap.exists) throw new Error('그룹을 찾을 수 없어요. 코드를 확인해주세요');
     const memberRef = db.collection('groups').doc(code).collection('members').doc(user.uid);
     const memberSnap = await memberRef.get();
-    const now = firebase.firestore.FieldValue.serverTimestamp();
     if (memberSnap.exists) {
-      const updateData = { displayName, updatedAt: now };
-      if (plan) updateData.plan = plan;
-      await memberRef.update(updateData);
+      // 이미 조원(재참가·이름 변경): 이름과 plan만 갱신, 읽음·암송 기록은 그대로
+      const patch = { displayName };
+      if (plan) patch.plan = plan;
+      await updateMyMember(code, patch);
     } else {
-      await memberRef.set({
+      const now = firebase.firestore.FieldValue.serverTimestamp();
+      const memberData = {
         displayName,
         plan: plan || '180',
         readDays: existingReadDays || {},
         joinedAt: now,
         updatedAt: now
-      });
+      };
+      if (memorized) memberData.memorized = memorized;
+      await memberRef.set(memberData);
     }
     return snap.data();
   }
@@ -295,11 +309,55 @@
   }
 
   // 사용자 프로필(혼자 컨텍스트 + 조 포인터 + 메타) — users/{uid}
+  // cb(data, meta): meta = { fromCache, hasPendingWrites } — 서버가 확인한 값인지 구별용(암송 사본 맞춰 쓰기)
   function watchProfile(uid, cb) {
     return db.collection('users').doc(uid).onSnapshot(
-      snap => cb(snap.exists ? snap.data() : null),
+      { includeMetadataChanges: true },
+      snap => cb(snap.exists ? snap.data() : null,
+        { fromCache: !!snap.metadata.fromCache, hasPendingWrites: !!snap.metadata.hasPendingWrites }),
       err => console.error('profile sync error:', err)
     );
+  }
+
+  // === 성경암송: 외운 기록 원본(users/{uid}.memorized)은 여기서만 쓴다 ===
+  // 체크: 해당 키만 병합(문서 없어도 동작). 해제: 해당 키만 삭제(문서 없으면 이미 해제된 것).
+  async function setMemorized(uid, id, dateISO) {
+    const ref = db.collection('users').doc(uid);
+    const FV = firebase.firestore.FieldValue;
+    try {
+      if (dateISO) {
+        await ref.set({ memorized: { [id]: dateISO }, updatedAt: FV.serverTimestamp() }, { merge: true });
+      } else {
+        await ref.update(new firebase.firestore.FieldPath('memorized', id), FV.delete(), 'updatedAt', FV.serverTimestamp());
+      }
+      return { ok: true };
+    } catch (e) {
+      if (!dateISO && e.code === 'not-found') return { ok: true };
+      console.warn('setMemorized failed:', e.code || e);
+      return { ok: false, code: e.code || 'unknown' };
+    }
+  }
+
+  // 현재 조의 내 조원 문서 사본을 원본에 맞춘다 (서버 트랜잭션: 두 기기가 엇갈려도 최신 원본 기준)
+  // 반환: 'updated' | 'same' | 'no-member'
+  async function reconcileMemorized(groupId, uid, validIds) {
+    const L = window.MemorizeLogic;
+    const userRef = db.collection('users').doc(uid);
+    const memberRef = db.collection('groups').doc(groupId).collection('members').doc(uid);
+    return db.runTransaction(async tx => {
+      const [userSnap, memberSnap] = [await tx.get(userRef), await tx.get(memberRef)];
+      if (!memberSnap.exists) return 'no-member';
+      const orig = L.normalizeMemorized(userSnap.exists ? userSnap.data().memorized : null, validIds);
+      const copy = memberSnap.data().memorized || {};
+      if (L.sameMemorized(orig, copy)) return 'same';
+      tx.update(memberRef, { memorized: orig, updatedAt: firebase.firestore.FieldValue.serverTimestamp() });
+      return 'updated';
+    });
+  }
+
+  // 조 암송 시작일 (조장만 — 규칙에서 강제)
+  async function setMemoStart(groupId, dateISO) {
+    await updateGroupMeta(groupId, { memoStart: dateISO });
   }
   async function saveProfile(uid, patch) {
     const ref = db.collection('users').doc(uid);
@@ -408,6 +466,9 @@
     watchProfile,
     saveProfile,
     setProfileMapKeys,
+    setMemorized,
+    reconcileMemorized,
+    setMemoStart,
     getMemberOnce,
     removeMember,
   };
