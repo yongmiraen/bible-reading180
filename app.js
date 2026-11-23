@@ -36,6 +36,10 @@ const VERSION_TAG   = { GAE: '개역',     SAENEW: '새번역',  NIV: 'NIV', ESV
 const VERSION_ORDER = ['GAE', 'SAENEW', 'NIV', 'ESV'];
 function bibleDict(v) { return (window.BIBLES && window.BIBLES[v]) || {}; }
 
+// === 성경암송 72구절: 등록된 구절 id (정규화·집계 기준) ===
+const MEMO_IDS = new Set((window.MemorizeLogic && window.MEMORIZE72)
+  ? window.MemorizeLogic.listVerses(window.MEMORIZE72).map(v => v.id) : []);
+
 // === 번역본 지연 로드 ===
 // 개역개정(bible/GAE.js)만 처음에 받고, 새번역·NIV·ESV는 비교 보기를 켤 때 받는다.
 const _versionLoads = {};
@@ -85,6 +89,8 @@ const defaultState = () => ({
   memos: {},            // { "창4:2": "메모 텍스트", ... } — 개인용, 전역
   soloStash: { plan: '180', startDate: null, groupName: '', readDays: {} },
   groupRef: null,        // { groupId, displayName } | null
+  memorized: {},         // 성경암송: { "고후5:17": "2026-11-23", ... } — 원본은 users/{uid}.memorized
+  memoStartSolo: null,   // 혼자 모드 암송 시작일 'YYYY-MM-DD' (users/{uid}.memoStart)
 });
 
 // 이전 버전 호환: 문자열이면 배열로 변환
@@ -148,6 +154,7 @@ let volatile = {
   commentUnsubs: {},    // { prayerId: unsub }
   openComments: {},     // { prayerId: true }
   editingPrayer: null,  // 인라인 수정 중인 prayerId
+  memorizedConfirmed: false, // 서버가 확인한 암송 원본을 한 번이라도 받았는지 (조 생성·참가 때 사본 포함 여부)
 };
 let pendingInviteCode = null;
 let lastInviteCode = null;
@@ -169,14 +176,18 @@ function normalizeFlatSolo(data) {
   return null;
 }
 
-// 혼자 모드 Firestore 구독 (프로필 기반)
+// 프로필 Firestore 구독 — 혼자·조 모드 모두 유지 (암송 원본·형광펜·메모는 모드와 무관한 개인 데이터)
 function subscribeSolo() {
   if (soloUnsub) { soloUnsub(); soloUnsub = null; }
   if (!volatile.userId || !isGoogleLinked()) return;
-  soloUnsub = Groups.watchProfile(volatile.userId, (data) => {
-    if (!data) return;
-    let changed = false;
-    if (data.groupRef !== undefined && JSON.stringify(data.groupRef) !== JSON.stringify(state.groupRef)) {
+  soloUnsub = Groups.watchProfile(volatile.userId, (data, meta) => {
+    meta = meta || { fromCache: false, hasPendingWrites: false };
+    const memoChanged = applyMemorizedFromCloud(data, meta);
+    if (!meta.fromCache && !meta.hasPendingWrites) scheduleReconcile('profile');
+    if (!data) { if (memoChanged) { saveState(); renderFromSync(); } return; }
+    let changed = memoChanged;
+    // 조 모드에서는 다른 기기의 조 포인터 변경을 적용하지 않는다(현재 조와 어긋나지 않게)
+    if (state.mode !== 'group' && data.groupRef !== undefined && JSON.stringify(data.groupRef) !== JSON.stringify(state.groupRef)) {
       state.groupRef = data.groupRef; changed = true;
     }
     if (data.highlights && JSON.stringify(data.highlights) !== JSON.stringify(state.highlights)) {
@@ -202,6 +213,76 @@ function subscribeSolo() {
     if (changed) { saveState(); renderFromSync(); }
     else { saveState(); }
   });
+}
+
+// === 성경암송: 외운 기록 ===
+// 프로필 스냅샷 → state.memorized. 서버 확인값이면 그대로 교체(다른 기기에서 해제한 것도 반영),
+// 캐시값이면 병합만(아직 확인 안 된 빈 값으로 지우지 않게). 반환: 바뀌었는지
+function applyMemorizedFromCloud(data, meta) {
+  const L = window.MemorizeLogic;
+  if (!L) return false;
+  const confirmed = meta && !meta.fromCache;
+  const cloud = L.normalizeMemorized(data && data.memorized, MEMO_IDS);
+  const next = confirmed ? cloud : Object.assign({}, state.memorized, cloud);
+  let changed = !L.sameMemorized(next, state.memorized);
+  state.memorized = next;
+  if (confirmed) {
+    volatile.memorizedConfirmed = true;
+    const ms = (data && data.memoStart) || null;
+    if (ms !== state.memoStartSolo) { state.memoStartSolo = ms; changed = true; }
+  }
+  return changed;
+}
+
+// 현재 조의 내 조원 문서 사본을 원본에 맞춘다(서버 트랜잭션). 한 번에 하나, 실패 시 5s·30s·120s 재시도.
+const RECONCILE_BACKOFF = [5000, 30000, 120000];
+const _reconcile = { running: false, again: false, attempt: 0, timer: null, blocked: false };
+function scheduleReconcile(reason) {
+  const gid = (state.groupRef && state.groupRef.groupId) || state.groupId;
+  if (!gid || !volatile.userId || !isGoogleLinked() || !Groups.reconcileMemorized || _reconcile.blocked) return;
+  if (_reconcile.running) { _reconcile.again = true; return; }
+  _reconcile.running = true;
+  clearTimeout(_reconcile.timer);
+  Groups.reconcileMemorized(gid, volatile.userId, MEMO_IDS).then(() => {
+    _reconcile.attempt = 0;
+  }, e => {
+    if (e && e.code === 'permission-denied') { _reconcile.blocked = true; return; } // 로그인·권한이 바뀔 때까지 중단
+    const wait = RECONCILE_BACKOFF[Math.min(_reconcile.attempt, RECONCILE_BACKOFF.length - 1)];
+    _reconcile.attempt++;
+    _reconcile.timer = setTimeout(() => scheduleReconcile('retry'), wait);
+  }).finally(() => {
+    _reconcile.running = false;
+    if (_reconcile.again) { _reconcile.again = false; scheduleReconcile('again'); }
+  });
+}
+window.addEventListener('online', () => { _reconcile.attempt = 0; scheduleReconcile('online'); });
+if (window.Groups && Groups.onAuthChange) Groups.onAuthChange(() => { _reconcile.blocked = false; });
+
+// 새 조원 문서에 넣을 암송 사본: 서버가 확인한 원본을 받은 뒤에만 (아니면 생략 → 맞춰 쓰기가 채움)
+function memorizedForNewMember() {
+  if (!volatile.memorizedConfirmed || !window.MemorizeLogic) return undefined;
+  return window.MemorizeLogic.normalizeMemorized(state.memorized, MEMO_IDS);
+}
+
+// 외웠어요 체크/해제: 화면은 바로 바꾸고, 원본 저장이 실패하면 되돌린다.
+async function toggleMemorized(id) {
+  if (!MEMO_IDS.has(id)) return { ok: false, code: 'unknown-id' };
+  const was = state.memorized[id] || null;
+  const date = was ? null : todayLocalISO();
+  state.memorized = Object.assign({}, state.memorized);
+  if (date) state.memorized[id] = date; else delete state.memorized[id];
+  saveState();
+  renderFromSync();
+  if (!volatile.userId || !isGoogleLinked()) return { ok: true };
+  const r = await Groups.setMemorized(volatile.userId, id, date);
+  if (!r || !r.ok) {
+    state.memorized = Object.assign({}, state.memorized);
+    if (was) state.memorized[id] = was; else delete state.memorized[id];
+    saveState();
+    renderFromSync();
+    toast('저장하지 못했어요. 인터넷 연결을 확인해주세요');
+  }
+  return r;
 }
 
 // 프로필 저장 (혼자 컨텍스트 + 전역 highlights + 메타). 어느 모드에서든 호출 가능.
@@ -535,7 +616,10 @@ function subscribeToGroup() {
     },
     (members) => {
       const before = state.plan + JSON.stringify(state.readDays);
+      const firstForGroup = volatile.membersGroup !== state.groupId;
+      volatile.membersGroup = state.groupId;
       volatile.members = members;
+      if (firstForGroup) scheduleReconcile('members'); // 조원 데이터 준비 → 내 암송 사본 맞추기
       const me = members.find(m => m.uid === volatile.userId);
       if (me) {
         // 조의 plan을 권위값으로: 들어온 멤버 plan과 다르면 적용
@@ -555,7 +639,7 @@ function subscribeToGroup() {
       // 다른 조원의 체크만 바뀐 경우, 조원 정보를 보여주는 화면(목록·조원·기도)이 아니면
       // 본문 전체를 다시 그릴 필요가 없다.
       const mineChanged = before !== state.plan + JSON.stringify(state.readDays);
-      if (mineChanged || ['list', 'members', 'prayer'].includes(state.view)) renderFromSync();
+      if (mineChanged || ['list', 'members', 'prayer', 'memorize'].includes(state.view)) renderFromSync();
     }
   );
 }
@@ -679,8 +763,8 @@ function switchToSolo() {
 }
 
 function switchToGroup() {
-  if (soloUnsub) { soloUnsub(); soloUnsub = null; }
   if (state.mode === 'group') return;
+  // 프로필 구독은 끊지 않는다(암송 원본·형광펜·메모는 조 모드에서도 동기화)
   state.soloStash = { plan: state.plan, startDate: state.startDate, groupName: state.groupName, readDays: { ...state.readDays } };
   if (state.groupRef && state.groupRef.groupId) {
     state.mode = 'group';
@@ -692,6 +776,8 @@ function switchToGroup() {
     saveState();
     persistActiveMode();
     subscribeToGroup();
+    if (!soloUnsub) subscribeSolo();
+    scheduleReconcile('switch-group');
     render();
   } else {
     state.mode = 'group';
@@ -788,7 +874,7 @@ async function init() {
         if (profileUnsub) { profileUnsub(); profileUnsub = null; }
         if (!wasSetUp && isSetUp()) {
           if (state.mode === 'group' && state.groupId) subscribeToGroup();
-          else if (state.mode === 'solo') subscribeSolo();
+          subscribeSolo();
           render();
         }
       }
@@ -813,6 +899,8 @@ function applyCloudProfile(rawCloud) {
     state.groupRef = state.groupRef || merged.groupRef;
     if (rawCloud && rawCloud.highlights) state.highlights = rawCloud.highlights;
     if (rawCloud && rawCloud.memos) state.memos = rawCloud.memos;
+    // 암송: 첫 로드 값은 서버 확인 여부를 모르므로 병합만 (확정 교체는 실시간 구독의 서버 확인 스냅샷에서)
+    if (rawCloud) applyMemorizedFromCloud(rawCloud, { fromCache: true });
 
     const locallySetUp = (state.mode === 'group' && state.groupId) || (state.mode === 'solo' && state.startDate);
     const cloudActiveMode = rawCloud && rawCloud.activeMode ? rawCloud.activeMode : merged.activeMode;
@@ -865,11 +953,9 @@ function initAfterProfile() {
     return;
   }
 
-  if (state.mode === 'group' && state.groupId) {
-    subscribeToGroup();
-  } else if (state.mode === 'solo' && isGoogleLinked()) {
-    subscribeSolo(); // Google 연동 시 혼자 모드도 동기화
-  }
+  if (state.mode === 'group' && state.groupId) subscribeToGroup();
+  // 프로필(암송 원본·형광펜·메모·혼자 진도) 구독은 모드와 무관하게 유지
+  if (isGoogleLinked()) subscribeSolo();
   render();
 }
 
@@ -1445,7 +1531,7 @@ function bindCreateForm() {
     const btn = document.getElementById('createBtn');
     btn.disabled = true; btn.textContent = '만드는 중...';
     try {
-      const code = await Groups.createGroup({ name, startDate, displayName, plan: state.plan });
+      const code = await Groups.createGroup({ name, startDate, displayName, plan: state.plan, memorized: memorizedForNewMember() });
       logEvent('create_group');
       state.groupId = code;
       state.displayName = displayName;
@@ -1471,6 +1557,8 @@ function renderJoinForm(prefilledCode, fromLink) {
       ${fromLink ? '' : `<button class="back-btn" id="backToGroupChoice">← 돌아가기</button>`}
       <h1>🔗 ${fromLink ? '초대받은 조 참가' : '조 참가'}</h1>
       <p class="lead">${fromLink ? '초대 링크로 들어오셨어요. 본인 이름만 입력하면 끝!' : '조장에게 받은 6자리 코드를 입력하세요'}</p>
+      ${state.groupRef && state.groupRef.groupId && state.groupRef.groupId !== (prefilledCode || '').toUpperCase()
+        ? `<p class="orphan-warn">지금 조에서 나가지 않고 참가하면, 이전 조원들은 내 마지막 진도·암송 현황을 계속 볼 수 있어요. 원하지 않으시면 먼저 설정에서 '조 나가기'를 해주세요.</p>` : ''}
       <label class="form-row">초대 코드
         <input type="text" id="joinCode" value="${escapeHtml(prefilledCode||'')}" placeholder="예) ABC123" maxlength="6" ${fromLink?'readonly':''} style="text-transform:uppercase;letter-spacing:.2em">
       </label>
@@ -1507,7 +1595,7 @@ function bindJoinForm(fromLink) {
     const btn = document.getElementById('joinBtn');
     btn.disabled = true; btn.textContent = '참가 중...';
     try {
-      await Groups.joinGroup({ code, displayName, existingReadDays: state.readDays, plan: state.plan });
+      await Groups.joinGroup({ code, displayName, existingReadDays: state.readDays, plan: state.plan, memorized: memorizedForNewMember() });
       logEvent('join_group');
       state.mode = 'group';
       state.groupId = code;
@@ -1520,6 +1608,7 @@ function bindJoinForm(fromLink) {
       state.viewDay = null;
       saveState();
       subscribeToGroup();
+      if (!soloUnsub) subscribeSolo();
       render();
     } catch (e) {
       btn.disabled = false; btn.textContent = '참가하기';
@@ -2460,7 +2549,13 @@ function bindSettings() {
   };
   if ($('leaveBtn')) $('leaveBtn').onclick = async () => {
     if (!confirm(`조 "${effectiveTitle()}"에서 나가시겠어요?\n진도 기록은 사라지지 않지만 조원들 진도는 더 이상 볼 수 없게 돼요.`)) return;
-    try { await Groups.leaveGroup(state.groupId); } catch (e) { console.error(e); }
+    // 조원 문서 삭제가 확인돼야 나간 것 — 실패하면 조원들에게 계속 보이므로 상태를 그대로 둔다
+    try { await Groups.leaveGroup(state.groupId); }
+    catch (e) {
+      console.error(e);
+      alert('조에서 나가지 못했어요. 인터넷 연결을 확인한 뒤 다시 시도해주세요.');
+      return;
+    }
     Groups.unsubscribe();
     state.groupId = null;
     state.groupRef = null; // 나간 조로 다시 들어가지 않게
@@ -2530,13 +2625,18 @@ function bindSettings() {
     state.view = 'feedback'; saveState(); render();
   };
   $('resetAllBtn').onclick = async () => {
-    if (!confirm('전체 초기화 후 처음부터 시작하시겠어요?\n조 모드라면 조에서도 나갑니다.\n(형광펜·메모는 그대로 남아요)')) return;
+    if (!confirm('전체 초기화 후 처음부터 시작하시겠어요?\n조 모드라면 조에서도 나갑니다.\n(형광펜·메모·외운 암송 구절은 그대로 남아요)')) return;
     if (state.mode === 'group' && state.groupId) {
-      try { await Groups.leaveGroup(state.groupId); } catch (e) {}
+      try { await Groups.leaveGroup(state.groupId); }
+      catch (e) {
+        alert('조에서 나가지 못해 초기화를 멈췄어요. 인터넷 연결을 확인한 뒤 다시 시도해주세요.');
+        return;
+      }
       Groups.unsubscribe();
     }
     if (soloUnsub) { soloUnsub(); soloUnsub = null; }
-    const keep = { highlights: state.highlights, memos: state.memos, bibleView: state.bibleView };
+    const keep = { highlights: state.highlights, memos: state.memos, bibleView: state.bibleView,
+      memorized: state.memorized, memoStartSolo: state.memoStartSolo };
     state = Object.assign(defaultState(), keep);
     saveState();
     // 클라우드 프로필도 초기화 (안 하면 새로고침 시 이전 진도·조로 복원됨)

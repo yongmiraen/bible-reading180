@@ -290,14 +290,14 @@ async function runDevice(d) {
     const s = await page.evaluate(() => ({ g: state.groupId, ref: state.groupRef }));
     if (s.g || s.ref) throw new Error(JSON.stringify(s));
   });
-  await step('전체 초기화 → 처음 화면, 형광펜·메모 유지', async () => {
-    const before = await page.evaluate(() => [Object.keys(state.highlights).length, Object.keys(state.memos).length]);
+  await step('전체 초기화 → 처음 화면, 형광펜·메모·외운 구절 유지', async () => {
+    const before = await page.evaluate(() => [Object.keys(state.highlights).length, Object.keys(state.memos).length, Object.keys(state.memorized || {}).length]);
     if (await page.$('#modeSolo')) { await tap('#modeSolo'); await page.waitForTimeout(300); }
     if (await page.$('#startBtn')) { await page.fill('#startDate', START); await tap('#startBtn'); }
     await page.waitForSelector('#settingsBtn', { timeout: 8000 }); await tap('#settingsBtn'); await page.waitForSelector('#resetAllBtn');
     await tap('#resetAllBtn'); await page.waitForTimeout(400); await page.reload(); await page.waitForTimeout(800);
-    const s = await page.evaluate(() => ({ plan: !!document.getElementById('plan180'), hl: Object.keys(state.highlights).length, memo: Object.keys(state.memos).length }));
-    if (!s.plan || s.hl !== before[0] || s.memo !== before[1]) throw new Error(JSON.stringify({ before, s }));
+    const s = await page.evaluate(() => ({ plan: !!document.getElementById('plan180'), hl: Object.keys(state.highlights).length, memo: Object.keys(state.memos).length, mz: Object.keys(state.memorized || {}).length }));
+    if (!s.plan || s.hl !== before[0] || s.memo !== before[1] || s.mz !== before[2]) throw new Error(JSON.stringify({ before, s }));
   });
 
   await browser.close();

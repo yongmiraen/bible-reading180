@@ -123,6 +123,12 @@
       if (dateISO) m[vid] = dateISO; else delete m[vid];
       persist(); emitMembers(c);
     },
+    // 다른 사람이 만든 조 (조 이동 시나리오용)
+    makeGroup(c, name) {
+      db.groups[c] = { name: name || '다른조', startDate: '2026-11-01', owner: 'u-other', createdAt: ts() };
+      db.members[c] = { 'u-other': { displayName: '다른조장', plan: '180', readDays: {} } };
+      persist();
+    },
     db: () => clone(db),
   };
 })();
